@@ -153,6 +153,21 @@ export const jdHasDegreeEquivalencyClause = (
   );
 };
 
+const STRICT_FIELD_DEGREE_RE =
+  /\b(?:bachelor'?s?|b\.?s\.?|b\.?a\.?|undergraduate)\b[^\n]{0,25}?\b(?:degree\s+)?in\s+(?:computer science|cs|computer engineering|software engineering|engineering|information technology|mathematics|a (?:technical|stem) field)\b/i;
+const DEGREE_ALTERNATIVE_ON_LINE_RE =
+  /\b(?:equivalent|experience|in lieu|in place of|preferred|a plus|nice to have|ideally|bonus|or similar|bootcamp)\b/i;
+
+/**
+ * A requirement line naming a degree field ("Bachelors Degree in Computer Science") with no
+ * alternative on that line. With a separate "or equivalent" line elsewhere, the JD is conflicting:
+ * the specific line is usually what screeners and knockout questions use.
+ */
+export const jdHasStrictFieldDegreeLine = (rawText: string): boolean =>
+  rawText
+    .split(/\n|•|·|;/)
+    .some((line) => STRICT_FIELD_DEGREE_RE.test(line) && !DEGREE_ALTERNATIVE_ON_LINE_RE.test(line));
+
 export const jdAcceptsAssociateDegreePath = (combinedText: string, degreeRaw = ""): boolean => {
   const blob = normalizeText(`${combinedText}\n${degreeRaw}`);
   return (

@@ -124,6 +124,7 @@ export const api = {
       method: "POST",
     }),
   promoteTopJob: (id: string) => request<JobRecord>(`/top-jobs/${id}/promote`, { method: "POST" }),
+  markTopJobApplied: (id: string) => request<JobRecord>(`/top-jobs/${id}/applied`, { method: "POST" }),
   gmailConnectUrl: `${API_BASE}/gmail/oauth/start`,
   gmailStatus: () => request<GmailStatus>("/gmail/status", { cache: "no-store" }),
   gmailSync: (days = 7) =>

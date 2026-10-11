@@ -1729,11 +1729,13 @@ export function appendLotteryTicketGuidance(topMatch: string, params: {
 
 export function appendFintechGoStretchGuidance(topMatch: string, params: {
   rules: RuleEvaluation;
+  extracted: ExtractedJobData;
 }): string {
   if (!params.rules.fintechGoPrimaryStretch) return topMatch;
-  const line =
-    "Moderate backend/API fit with useful product collaboration overlap, but Go-primary fintech infrastructure makes this a stretch.";
-  return line;
+  const stretch = textMentionsGoLanguage(jobTextBlob(params.extracted))
+    ? "Go-primary fintech infrastructure"
+    : "multi-service payments infrastructure";
+  return `Moderate backend/API fit with useful product collaboration overlap, but ${stretch} makes this a stretch.`;
 }
 
 export function appendFoundingStretchGuidance(topMatch: string, params: {
@@ -1818,7 +1820,7 @@ export function polishScoringNarrative(params: {
     rawTop ? sanitizeNarrativeSentence(rawTop, 50) : rawTop,
     params.rules,
   );
-  topMatch = appendFintechGoStretchGuidance(topMatch, { rules: params.rules });
+  topMatch = appendFintechGoStretchGuidance(topMatch, { rules: params.rules, extracted: params.extracted });
   topMatch = appendFoundingStretchGuidance(topMatch, { rules: params.rules });
   topMatch = appendCredentialedAccountingSystemsGuidance(topMatch, { rules: params.rules });
   topMatch = appendGoDistributedDataInfraStretchGuidance(topMatch, { rules: params.rules });

@@ -1,11 +1,12 @@
 import type { RuleEvaluation, SurvivabilityLever } from "../types/scoring.js";
 import type { UserProfile } from "../types/userProfile.js";
 
-export type DegreeGapTier = "none" | "soft" | "medium" | "high";
+export type DegreeGapTier = "none" | "soft" | "conflicting" | "medium" | "high";
 
 export const DEGREE_DOCK_BY_TIER: Record<DegreeGapTier, number> = {
   none: 0,
   soft: 3,
+  conflicting: 8,
   medium: 10,
   high: 14,
 };
@@ -22,7 +23,7 @@ export const resolveDegreeGapTier = (
   if (rules.degreeEquivalencySatisfied) return "none";
 
   if (rules.degreeHasEquivalencyClause && !rules.explicitDegreeRisk) {
-    return "soft";
+    return rules.degreeConflictingRequirement ? "conflicting" : "soft";
   }
 
   if (!rules.explicitDegreeRisk) return "none";
@@ -47,7 +48,7 @@ export const resolveDegreeGapLever = (
   profile: UserProfile,
 ): DegreeGapLeverPair | null => {
   const tier = resolveDegreeGapTier(rules, profile);
-  if (tier === "soft") {
+  if (tier === "soft" || tier === "conflicting") {
     return {
       lever: "resume",
       leverLabel: "tailor resume to emphasize related experience",

@@ -41,7 +41,7 @@ export type TopJobRecord = {
   /** Location from the alert or the posting page. */
   location?: string;
   /** Why the row is no longer shown: the posting closed, or the location isn't remote/NYC. */
-  hiddenReason?: "closed" | "location";
+  hiddenReason?: "closed" | "location" | "applied";
   hiddenAt?: string;
   /** Last time the posting was re-checked for being closed. */
   liveCheckedAt?: string;

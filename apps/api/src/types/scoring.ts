@@ -319,6 +319,8 @@ export type RuleEvaluation = {
   goDistributedDataInfraCandidateGap?: boolean;
   /** JD allows related/equivalent experience in lieu of a degree — softens credential penalty. */
   degreeHasEquivalencyClause?: boolean;
+  /** Equivalency clause exists, but another line strictly requires a degree in a named field. */
+  degreeConflictingRequirement?: boolean;
   /** Candidate satisfies an accepted alternate credential path when JD allows equivalency. */
   degreeEquivalencySatisfied?: boolean;
   /** Non-addressable capability/specialization gap (valid skip driver). */

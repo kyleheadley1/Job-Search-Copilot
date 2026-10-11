@@ -217,8 +217,9 @@ export const buildHardRuleFlags = (
   ) {
     push({
       id: "degreePreferenceWithEquivalency",
-      message:
-        "Degree listed but JD allows related/equivalent experience — soft preference, not a first-pass filter.",
+      message: rules.degreeConflictingRequirement
+        ? "JD requires a specific degree on one line and allows equivalent experience on another — the strict line likely drives first-pass screening."
+        : "Degree listed but JD allows related/equivalent experience — soft preference, not a first-pass filter.",
     });
   }
 

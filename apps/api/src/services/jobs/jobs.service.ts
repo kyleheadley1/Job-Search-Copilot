@@ -44,6 +44,10 @@ export class JobNoJdSourceError extends Error {
   }
 }
 
+/** Today's calendar date in the server's (your) timezone, as YYYY-MM-DD. */
+const localDateKey = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 export function canConfirmApplied(job: Pick<JobRecord, "recommendation" | "score">): boolean {
   return true;
 }
@@ -339,7 +343,10 @@ export class JobsService {
 
   async confirmApplied(id: string): Promise<JobRecord> {
     const existing = await jobsRepository.getById(id);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.status !== "to_review") return existing;
+      return (await jobsRepository.updateAppliedAt(id, localDateKey(new Date()))) ?? existing;
+    }
     const draft = await this.findDraft(id);
     if (!draft) throw new JobNotFoundError();
     if (!canConfirmApplied(draft)) {

@@ -54,6 +54,7 @@ import {
 import {
   jdHasDegreeEquivalencyClause,
   jdIsDegreePositive,
+  jdHasStrictFieldDegreeLine,
   resolveDegreeEquivalencyRules,
 } from '../../lib/degreeEquivalency.js';
 import { jdProhibitsGenAI } from '../../lib/genAiRestriction.js';
@@ -218,6 +219,11 @@ export const evaluateRules = (
     degreeLevel,
     job.degreeRequirement?.raw ?? '',
   );
+  const degreeConflictingRequirement =
+    degreeRequiredSignal &&
+    degreeHasEquivalencyClause &&
+    !degreeEquivalencySatisfied &&
+    jdHasStrictFieldDegreeLine(`${job.rawText ?? ''}\n${job.degreeRequirement?.raw ?? ''}`);
 
   const strictNewGradPipeline =
     hasStrongPipelineMarkers(combinedText) &&
@@ -487,7 +493,11 @@ export const evaluateRules = (
       jdDutiesText,
     );
 
-  if (degreeRequiredSignal && degreeHasEquivalencyClause && !degreeEquivalencySatisfied) {
+  if (degreeConflictingRequirement) {
+    notes.push(
+      'JD conflicts on the degree: one line requires a specific degree, another allows equivalent experience — expect the specific line to drive screening.',
+    );
+  } else if (degreeRequiredSignal && degreeHasEquivalencyClause && !degreeEquivalencySatisfied) {
     notes.push(
       'Degree mentioned but JD allows equivalent, project, or bootcamp experience — treat as a soft screen note, not a hard gate.',
     );
@@ -810,6 +820,7 @@ export const evaluateRules = (
   return {
     explicitDegreeRisk,
     degreeHasEquivalencyClause,
+    degreeConflictingRequirement,
     degreeEquivalencySatisfied,
     jdDegreePositive,
     jdProhibitsGenAI: jdProhibitsGenAIContent,

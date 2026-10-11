@@ -61,7 +61,7 @@ jobsRouter.post("/:id/retriage", async (req, res, next) => {
     res.json({
       ...validated,
       tracked,
-      canConfirmApplied: !tracked && canConfirmApplied(validated),
+      canConfirmApplied: (!tracked || validated.status === "to_review") && canConfirmApplied(validated),
     });
   } catch (error) {
     if (error instanceof JobNotFoundError) {
@@ -151,7 +151,7 @@ jobsRouter.get("/:id", async (req, res, next) => {
     res.json({
       ...validated,
       tracked,
-      canConfirmApplied: !tracked && canConfirmApplied(validated),
+      canConfirmApplied: (!tracked || validated.status === "to_review") && canConfirmApplied(validated),
     });
   } catch (error) {
     next(error);

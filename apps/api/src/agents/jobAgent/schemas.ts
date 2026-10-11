@@ -171,6 +171,7 @@ export const RuleEvaluationSchema = z.object({
   goDistributedDataInfraRole: z.boolean().optional().default(false),
   goDistributedDataInfraCandidateGap: z.boolean().optional().default(false),
   degreeHasEquivalencyClause: z.boolean().optional().default(false),
+  degreeConflictingRequirement: z.boolean().optional().default(false),
   degreeEquivalencySatisfied: z.boolean().optional().default(false),
   jdDegreePositive: z.boolean().optional().default(false),
   jdProhibitsGenAI: z.boolean().optional().default(false),

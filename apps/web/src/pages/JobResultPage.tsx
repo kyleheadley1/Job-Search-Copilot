@@ -277,9 +277,9 @@ export const JobResultPage = () => {
           {!tracked ? (
             <p className="muted">Not added to tracker yet. It is saved only after you confirm you applied.</p>
           ) : (
-            <p className="muted">In tracker.</p>
+            <p className="muted">{job.status === "to_review" ? "In tracker, not marked applied yet." : "In tracker."}</p>
           )}
-          {!tracked && canConfirmApplied ? (
+          {canConfirmApplied ? (
             <button onClick={confirmApplied} disabled={busyConfirm}>
               {busyConfirm ? "Confirming..." : "Confirm I applied"}
             </button>

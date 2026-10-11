@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { topJobsRepository } from "../services/topJobs/topJobs.repository.js";
 import {
+  markTopJobApplied,
   promoteTopJobToTracker,
   runTopJobsSync,
   TopJobsGmailRequiredError,
@@ -61,6 +62,19 @@ topJobsRouter.get("/:id", async (req, res, next) => {
 topJobsRouter.post("/:id/promote", async (req, res, next) => {
   try {
     const job = await promoteTopJobToTracker(req.params.id!);
+    res.json(job);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Top job not found") {
+      res.status(404).json({ message: error.message });
+      return;
+    }
+    next(error);
+  }
+});
+
+topJobsRouter.post("/:id/applied", async (req, res, next) => {
+  try {
+    const job = await markTopJobApplied(req.params.id!);
     res.json(job);
   } catch (error) {
     if (error instanceof Error && error.message === "Top job not found") {

@@ -74,6 +74,8 @@ export function TopJobsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<TopJobsSortMode>(() => readTopJobsSortMode());
   const [scoreBusyId, setScoreBusyId] = useState<string | null>(null);
+  const [appliedBusyId, setAppliedBusyId] = useState<string | null>(null);
+  const [appliedNotice, setAppliedNotice] = useState<{ jobId: string; label: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,15 +137,19 @@ export function TopJobsPage() {
     }
   };
 
-  const handlePromote = async (id: string) => {
+  const handleApplied = async (job: TopJobRecord) => {
+    const label = `${companyCell(job)} — ${roleCell(job) || "this role"}`;
+    if (!window.confirm(`Mark ${label} as applied today? It moves to your tracker and leaves Top Jobs.`)) return;
+    setAppliedBusyId(job.id);
+    setError(null);
     try {
-      const job = await api.promoteTopJob(id);
-      setItems((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, promotedToJobId: job.id } : item)),
-      );
-      navigate(`/jobs/${job.id}`);
+      const saved = await api.markTopJobApplied(job.id);
+      setItems((prev) => prev.filter((item) => item.id !== job.id));
+      setAppliedNotice({ jobId: saved.id, label });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to add to tracker");
+      setError(e instanceof Error ? e.message : "Failed to mark applied");
+    } finally {
+      setAppliedBusyId(null);
     }
   };
 
@@ -236,6 +242,11 @@ export function TopJobsPage() {
       )}
       {status?.lastSyncError && <p className="error-text">Last sync error: {status.lastSyncError}</p>}
       {error && <p className="error-text">{error}</p>}
+      {appliedNotice && (
+        <p className="muted">
+          Marked {appliedNotice.label} as applied. <Link to={`/jobs/${appliedNotice.jobId}`}>Open in tracker</Link>
+        </p>
+      )}
 
       {loading ? (
         <p>Loading…</p>
@@ -307,8 +318,14 @@ export function TopJobsPage() {
                       >
                         {scoreBusyId === job.id ? "…" : "Score"}
                       </button>
-                      <button type="button" className="btn btn-sm" onClick={() => void handlePromote(job.id)}>
-                        Add to Tracker
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        title="Confirm you applied: saves it to the tracker as applied today"
+                        disabled={appliedBusyId === job.id}
+                        onClick={() => void handleApplied(job)}
+                      >
+                        {appliedBusyId === job.id ? "Saving…" : "I applied"}
                       </button>
                     </div>
                   </td>
@@ -398,12 +415,19 @@ export function TopJobDetailPage() {
         <button
           type="button"
           className="btn"
+          title="Confirm you applied: saves it to the tracker as applied today"
+          disabled={scoreBusy}
           onClick={async () => {
-            const promoted = await api.promoteTopJob(job.id);
-            navigate(`/jobs/${promoted.id}`);
+            if (!window.confirm("Mark this role as applied today? It moves to your tracker and leaves Top Jobs.")) return;
+            try {
+              const saved = await api.markTopJobApplied(job.id);
+              navigate(`/jobs/${saved.id}`);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Failed to mark applied");
+            }
           }}
         >
-          Add to Tracker
+          I applied
         </button>
         <Link to="/top-jobs">Back to Top Jobs</Link>
       </div>

@@ -135,6 +135,40 @@ describe("degree dock tiers", () => {
     expect(computeDegreeGapDock(rules, userProfile)).toBeLessThan(DEGREE_DOCK_BY_TIER.medium);
   });
 
+  it("strict field-degree line plus a separate 'or equivalent' line → conflicting tier", () => {
+    const breezeJob: ExtractedJobData = {
+      ...NO_DEGREE_JOB,
+      company: "Breeze",
+      title: "Full Stack Engineer - Junior",
+      degreeRequirement: { level: "required", raw: "Bachelors Degree in Computer Science" },
+      rawText: [
+        "What We're Looking For",
+        "Bachelors Degree in Computer Science ",
+        "2+ years of professional software engineering experience.",
+        "Solid full stack experience with React.js, Node.js, and TypeScript.",
+        "Bachelor's degree or equivalent practical experience.",
+      ].join("\n"),
+    };
+    const rules = evaluateRules(breezeJob, userProfile, { activeResumeType: "BASE" });
+    expect(rules.degreeHasEquivalencyClause).toBe(true);
+    expect(rules.degreeConflictingRequirement).toBe(true);
+    expect(resolveDegreeGapTier(rules, userProfile)).toBe("conflicting");
+    expect(computeDegreeGapDock(rules, userProfile)).toBe(DEGREE_DOCK_BY_TIER.conflicting);
+    expect(DEGREE_DOCK_BY_TIER.conflicting).toBeGreaterThan(DEGREE_DOCK_BY_TIER.soft);
+    expect(DEGREE_DOCK_BY_TIER.conflicting).toBeLessThan(DEGREE_DOCK_BY_TIER.medium);
+  });
+
+  it("field degree with the alternative on the same line stays soft", () => {
+    const job: ExtractedJobData = {
+      ...NO_DEGREE_JOB,
+      degreeRequirement: { level: "required", raw: "BS in Computer Science or equivalent experience" },
+      rawText: "Requirements\nBS in Computer Science or equivalent experience\n3+ years TypeScript",
+    };
+    const rules = evaluateRules(job, userProfile, { activeResumeType: "BASE" });
+    expect(rules.degreeConflictingRequirement).toBe(false);
+    expect(resolveDegreeGapTier(rules, userProfile)).toBe("soft");
+  });
+
   it("unconditional degree at structured employer → high tier", () => {
     const rules = evaluateRules(IBM_JOB, userProfile, { activeResumeType: "BASE" });
     expect(rules.explicitDegreeRisk).toBe(true);

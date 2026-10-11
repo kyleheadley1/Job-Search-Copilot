@@ -14,6 +14,7 @@ import { fetchPosting, PostingFetchError, type FetchedPosting } from "../gmail/j
 import { preFilterListing, preFilterTitle } from "./preFilter.js";
 import { topJobsRepository } from "./topJobs.repository.js";
 import { jobsRepository } from "../jobs/jobs.repository.js";
+import { jobsService } from "../jobs/jobs.service.js";
 import type { JobRecord } from "../../types/job.js";
 import { buildTrackerSpreadsheetFromJob } from "../../tracker/canonicalSpreadsheet.js";
 import { ingestAlertEmails } from "./alertEmails.js";
@@ -524,4 +525,12 @@ export const promoteTopJobToTracker = async (topJobId: string): Promise<JobRecor
   await jobsRepository.saveTriage(job);
   await topJobsRepository.markPromoted(topJobId, job.id);
   return job;
+};
+
+/** You applied: save the role to the tracker as applied (today) and take it off Top Jobs. */
+export const markTopJobApplied = async (topJobId: string): Promise<JobRecord> => {
+  const promoted = await promoteTopJobToTracker(topJobId);
+  const applied = await jobsService.confirmApplied(promoted.id);
+  await topJobsRepository.hide(topJobId, "applied");
+  return applied;
 };
