@@ -88,11 +88,9 @@ describe("runDailyAgent", () => {
     const summary = await runDailyAgent(deps, NOW);
     expect(deps.run).toHaveBeenCalledTimes(1);
     const follow = saved.find((s) => s.kind === "follow_up")!;
-    const ghost = saved.find((s) => s.kind === "mark_ghosted")!;
+    expect(saved.some((s) => s.kind === "mark_ghosted")).toBe(false);
     expect(follow).toMatchObject({ writtenBy: "agent", priority: 4, draft: "Hi there, ..." });
-    expect(ghost.draft).toBeUndefined();
-    expect(ghost.proposedChange).toEqual({ jobId: "job-a", status: "lapsed" });
-    expect(summary).toMatchObject({ candidates: 2, written: 2, budgetLimited: false });
+    expect(summary).toMatchObject({ candidates: 1, written: 1, budgetLimited: false });
   });
 
   it("falls back to free rule text when today's budget is spent", async () => {
@@ -108,7 +106,6 @@ describe("runDailyAgent", () => {
     const base = { company: "x", role: null, title: "t", reason: "r", priority: 1, draftable: false, createdAt: daysAgo(1), updatedAt: earlierToday };
     const { deps, saved, expired } = makeDeps({
       existing: [
-        { ...base, id: `mark_ghosted:a:${daysAgo(40).slice(0, 10)}`, kind: "mark_ghosted", appKey: "a", writtenBy: "agent", status: "dismissed" },
         { ...base, id: `follow_up:b:${daysAgo(10).slice(0, 10)}`, kind: "follow_up", appKey: "b", writtenBy: "agent", status: "open" },
       ],
     });

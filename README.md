@@ -10,7 +10,7 @@ The app ingests job posts (pasted text, URL, or a one-click capture from the Chr
 
 A Gmail dashboard reads your application emails, groups them into applications with their current status, recovers the original job description for each one, and scores it blind to the outcome so you can see whether the fit score predicts real results.
 
-A low-cost agentic layer sits on top: a daily agent that finds your next steps (follow-ups, thank-yous, interview prep, ghosted roles) and an on-demand chat assistant that answers questions about your search. Both can suggest actions, but nothing changes and no email is sent without your approval (see "Agentic layer" below).
+A low-cost agentic layer sits on top: a daily agent that finds your next steps (follow-ups, thank-yous, interview prep) and an on-demand chat assistant that answers questions about your search. Email drafts and most tracker changes wait for your approval. Silent applications auto-lapse in the tracker (and un-lapse if a later email shows progress); the app never sends email (see "Agentic layer" below).
 
 It is designed as an operator assistant, not an autonomous applier.
 
@@ -67,7 +67,7 @@ Scores are final: a scored row is never re-scored by later syncs, recovery runs,
 
 **Agentic layer (approval-based)**
 
-Two features act on your behalf, both built so that the model only reads and suggests. Anything that changes data or touches email goes through a card you approve.
+Two features act on your behalf, both built so that the model only reads and suggests. Email drafts and most tracker changes go through a card you approve. One exception: after 30 days of silence on an open application, the tracker is marked `lapsed` automatically; a later process email (interview, assessment, offer, rejection) moves it forward again.
 
 *Next steps agent (dashboard card)*
 
@@ -76,9 +76,9 @@ Two features act on your behalf, both built so that the model only reads and sug
   - an interview in the next 3 days (prep)
   - an interview in the last 2 days (thank-you)
   - no reply for 7–29 days mid-process (follow-up)
-  - no reply for 30+ days on an open tracker row (mark as ghosted/`lapsed`)
+- Open tracker rows with no email for 30+ days are marked `lapsed` automatically (no Next steps card). A later Gmail update moves the row from `lapsed` to the new status (interviewing, assessment, offer, rejected)
 - One gpt-5-mini call then ranks the new items, explains each in a sentence, and writes short email drafts. Items written on an earlier day are rewritten in that same daily call, so priorities and wording stay current; items written today, dismissed, or done are not paid for again. Due times show the date with a live countdown ("Oct 6, 10:45 AM (in 23h)"), so the text never carries a stale "in N hours". About $0.001–0.02 per day
-- What it does on its own: write suggestions and draft text inside the app. What waits for you: "Approve" applies a tracker change; "Create Gmail draft" opens an editor (recipient + text) and saves a reply draft in the original thread
+- What it does on its own: write suggestions and draft text inside the app, and auto-lapse / un-lapse tracker rows from Gmail silence or later process email. What waits for you: "Approve" on remaining tracker-change cards; "Create Gmail draft" opens an editor (recipient + text) and saves a reply draft in the original thread
 
 *Chat assistant (every page)*
 

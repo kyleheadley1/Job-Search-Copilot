@@ -34,6 +34,9 @@ vi.mock("../../config/mongo.js", async (importOriginal) => {
 vi.mock("../../services/gmail/trackerAutoAdd.js", () => ({
   addMissingApplicationsQuietly: vi.fn(async () => 0),
 }));
+vi.mock("../../services/gmail/trackerAutoLapse.js", () => ({
+  syncTrackerFromGmailQuietly: vi.fn(async () => ({ lapsed: 0, revived: 0 })),
+}));
 
 vi.mock("../../services/llm/responsesClient.js", () => ({
   responsesClient: { runStructured: (...args: unknown[]) => runStructuredMock(...args) },

@@ -10,6 +10,7 @@ import { loadFeatureBudget, type FeatureBudget } from "../llm/featureBudget.js";
 import { localDay, withLlmContext } from "../llm/llmUsage.js";
 import { responsesClient, type StructuredCallResult } from "../llm/responsesClient.js";
 import { gatherCandidates, type AgentCandidate } from "./candidates.js";
+import { syncTrackerFromGmailQuietly } from "../gmail/trackerAutoLapse.js";
 import {
   suggestionsRepository,
   type AgentRunSummary,
@@ -57,7 +58,10 @@ export type AgentDeps = {
 };
 
 const defaultDeps: AgentDeps = {
-  loadApps: () => getGmailApplications(AGENT_LOOKBACK_DAYS),
+  loadApps: async () => {
+    await syncTrackerFromGmailQuietly();
+    return getGmailApplications(AGENT_LOOKBACK_DAYS);
+  },
   loadBudget: () =>
     loadFeatureBudget({
       feature: "agent",
@@ -99,8 +103,9 @@ export const buildAgentPrompt = (items: AgentCandidate[]): string =>
 
 /**
  * Free rules find the next steps; one budgeted call ranks, explains, and drafts the new ones.
- * Drafting is automatic (nothing is sent). Tracker changes wait for your approval. Steps you
- * dismissed or finished never come back, and steps already written are not paid for twice.
+ * Drafting is automatic (nothing is sent). Tracker changes other than auto-lapse / Gmail
+ * un-lapse wait for your approval. Steps you dismissed or finished never come back, and
+ * steps already written are not paid for twice.
  */
 export const runDailyAgent = async (deps: AgentDeps = defaultDeps, now = new Date()): Promise<AgentRunSummary> => {
   const nowIso = now.toISOString();

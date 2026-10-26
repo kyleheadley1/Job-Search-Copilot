@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gatherCandidates } from "../../services/agent/candidates.js";
+import { gatherCandidates, shouldAutoLapse } from "../../services/agent/candidates.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import type { InterviewRound } from "../../services/gmail/interviewRounds.js";
 
@@ -81,12 +81,29 @@ describe("gatherCandidates", () => {
     expect(kinds([app({ lastUpdateAt: daysAgo(9) })])).toEqual([]);
   });
 
-  it("proposes marking a silent tracked application lapsed, as a change that needs approval", () => {
-    const [c] = gatherCandidates(
-      [app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "applied" })],
-      NOW,
+  it("flags a silent tracked application for auto-lapse, not a Next steps card", () => {
+    expect(shouldAutoLapse(app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "applied" }), NOW)).toBe(
+      true,
     );
-    expect(c).toMatchObject({ kind: "mark_ghosted", proposedChange: { jobId: "job-1", status: "lapsed" } });
+    expect(shouldAutoLapse(app({ lastUpdateAt: daysAgo(35) }), NOW)).toBe(false);
+    expect(shouldAutoLapse(app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "lapsed" }), NOW)).toBe(
+      false,
+    );
+    expect(
+      shouldAutoLapse(
+        app({
+          lastUpdateAt: daysAgo(35),
+          trackerJobId: "job-1",
+          trackerStatus: "applied",
+          interviewRounds: [round({ scheduledAt: hoursFromNow(5) })],
+        }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not put silent tracker rows on Next steps — those auto-lapse", () => {
+    expect(kinds([app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "applied" })])).toEqual([]);
     expect(kinds([app({ lastUpdateAt: daysAgo(35) })])).toEqual([]);
     expect(kinds([app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "lapsed" })])).toEqual([]);
   });
@@ -97,6 +114,6 @@ describe("gatherCandidates", () => {
       app({ key: "a", lastUpdateAt: daysAgo(35), trackerJobId: "j", trackerStatus: "applied" }),
       app({ key: "b", status: "interviewing", furthestStage: "interviewing", interviewRounds: [round({ scheduledAt: hoursFromNow(5) })] }),
     ]);
-    expect(ordered).toEqual(["interview_prep", "mark_ghosted"]);
+    expect(ordered).toEqual(["interview_prep"]);
   });
 });

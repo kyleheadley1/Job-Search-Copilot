@@ -10,6 +10,7 @@ import { ACTION_STALE_DAYS } from "./gmailApplications.js";
 import { gmailMessagesRepository } from "./gmailMessages.repository.js";
 import { extractInterviewDetail, INTERVIEW_DETAIL_VERSION } from "./interviewRounds.js";
 import { addMissingApplicationsQuietly } from "./trackerAutoAdd.js";
+import { syncTrackerFromGmailQuietly } from "./trackerAutoLapse.js";
 
 export const DEFAULT_SYNC_DAYS = 7;
 export const MAX_SYNC_DAYS = 30;
@@ -241,6 +242,7 @@ const processMessages = async (opts: {
       await backfillActionRequests();
       await markRepliedActions();
       result.trackerAdded = await addMissingApplicationsQuietly();
+      await syncTrackerFromGmailQuietly();
     }
   }
 

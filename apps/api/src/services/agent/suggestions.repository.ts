@@ -63,6 +63,15 @@ export const suggestionsRepository = {
     await (await this.col()).replaceOne({ _id: id }, rest, { upsert: true });
   },
 
+  /** Drop leftover Next steps cards of one kind (e.g. auto-lapsed ghosted rows). */
+  async expireOpenKind(kind: AgentCandidate["kind"], now: string): Promise<number> {
+    const res = await (await this.col()).updateMany(
+      { status: "open", kind },
+      { $set: { status: "expired", updatedAt: now, resolvedAt: now } },
+    );
+    return res.modifiedCount;
+  },
+
   /** Open suggestions whose situation no longer holds (you replied, the interview passed) drop off. */
   async expireMissing(activeIds: string[], now: string): Promise<number> {
     const res = await (await this.col()).updateMany(

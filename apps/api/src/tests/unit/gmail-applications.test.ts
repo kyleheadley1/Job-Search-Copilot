@@ -406,4 +406,11 @@ describe("suggestTrackerStatus", () => {
     expect(suggestTrackerStatus("closed", "rejected")).toBeUndefined();
     expect(suggestTrackerStatus("rejected", "interviewing")).toBeUndefined();
   });
+
+  it("moves a lapsed row forward when email shows later progress", () => {
+    expect(suggestTrackerStatus("lapsed", "interviewing")).toBe("interviewing");
+    expect(suggestTrackerStatus("lapsed", "assessment")).toBe("assessment");
+    expect(suggestTrackerStatus("lapsed", "rejected")).toBe("rejected");
+    expect(suggestTrackerStatus("lapsed", "applied")).toBeUndefined();
+  });
 });

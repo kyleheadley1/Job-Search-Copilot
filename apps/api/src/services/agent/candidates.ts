@@ -45,6 +45,20 @@ const roleText = (app: GmailApplication) => (app.role ? `${app.role} at ${app.co
 const daysAgo = (iso: string, now: number) => Math.floor((now - Date.parse(iso)) / DAY_MS);
 const day = (iso: string) => iso.slice(0, 10);
 
+const upcomingRound = (app: GmailApplication, now: number) =>
+  app.interviewRounds.find((r) => !r.cancelled && r.scheduledAt && Date.parse(r.scheduledAt) > now);
+
+/** Open tracker row, no upcoming interview or pending request, and no email for 30+ days. */
+export const shouldAutoLapse = (app: GmailApplication, now = Date.now()): boolean => {
+  if (app.status === "rejected" || app.status === "offer") return false;
+  if (!app.trackerJobId || !app.trackerStatus || !OPEN_TRACKER.includes(app.trackerStatus)) return false;
+  if (app.actionNeeded || upcomingRound(app, now)) return false;
+  return daysAgo(app.lastUpdateAt, now) >= GHOSTED_AFTER_DAYS;
+};
+
+export const autoLapseNote = (silentDays: number): string =>
+  `auto-lapse: no email for ${silentDays}d (${GHOSTED_AFTER_DAYS}+ day silence threshold)`;
+
 export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): AgentCandidate[] => {
   const out: AgentCandidate[] = [];
   for (const app of apps) {
@@ -53,7 +67,7 @@ export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): Ag
     const base = { appKey: app.key, company: app.company, role: app.role, trackerJobId: app.trackerJobId };
     const silentDays = daysAgo(app.lastUpdateAt, now);
     const rounds = app.interviewRounds.filter((r) => !r.cancelled);
-    const upcoming = rounds.find((r) => r.scheduledAt && Date.parse(r.scheduledAt) > now);
+    const upcoming = upcomingRound(app, now);
 
     if (app.actionNeeded) {
       const a = app.actionNeeded;
@@ -127,26 +141,6 @@ export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): Ag
       });
     }
 
-    if (
-      !hasOffer &&
-      !upcoming &&
-      !app.actionNeeded &&
-      silentDays >= GHOSTED_AFTER_DAYS &&
-      app.trackerJobId &&
-      app.trackerStatus &&
-      OPEN_TRACKER.includes(app.trackerStatus)
-    ) {
-      out.push({
-        ...base,
-        id: `mark_ghosted:${app.key}:${day(app.lastUpdateAt)}`,
-        kind: "mark_ghosted",
-        title: `Mark ${roleText(app)} as lapsed`,
-        facts: `tracker says ${app.trackerStatus}; furthest stage ${app.furthestStage}; no email for ${silentDays}d`,
-        priority: 1,
-        draftable: false,
-        proposedChange: { jobId: app.trackerJobId, status: "lapsed" },
-      });
-    }
   }
   return out.sort((a, b) => b.priority - a.priority || (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999"));
 };
