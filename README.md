@@ -12,7 +12,7 @@ A Gmail dashboard reads your application emails, groups them into applications w
 
 A low-cost agentic layer sits on top: a daily agent that finds your next steps (follow-ups, thank-yous, interview prep) and an on-demand chat assistant that answers questions about your search. Email drafts and most tracker changes wait for your approval. Silent applications auto-lapse in the tracker (and un-lapse if a later email shows progress); the app never sends email (see "Agentic layer" below).
 
-It is designed as an operator assistant, not an autonomous applier. I built it in Cursor with an AI coding agent (see section N).
+It is designed as an operator assistant, not an autonomous applier.
 
 ## B. Features
 
@@ -359,14 +359,8 @@ Gmail access is read + create drafts; the app cannot send email. Email bodies ar
 
 This repository is configured so local resume files and common secret/local artifact paths are ignored by git. You are still responsible for reviewing staged files before pushing.
 
-## N. How this was built (Cursor)
+## N. Development Workflow
 
-I developed Job Search Copilot in **Cursor**, using its coding agent to plan and implement most of the full-stack work (API, scoring, Gmail, React UI). Cursor writes the bulk of the code. I do not type every line, and Cursor does not independently design the product.
+I use Cursor's AI coding agent throughout development to accelerate implementation, testing, and iteration. I define product requirements and constraints, evaluate technical approaches, and validate changes through code review, automated tests, and hands-on use.
 
-Division of responsibility:
-
-- **I decide** behavior, cost, safety, and scope: what to build, what to skip, standing rules (frozen scores, Gmail drafts only, never send, no commit unless I ask), and whether a plan is good enough to implement.
-- **Cursor implements** from an approved plan: explores the repo, drafts slices and file lists, writes the change, and runs tests.
-- **I keep ownership** by reviewing the diff, using the app, debugging when something is wrong, and being able to explain the resulting behavior.
-
-Example: application insights. I wanted richer analytics (seniority tables, a funnel, better models). Cursor measured the existing **$0.30/month** cap and **~$0.003** weekly summary, then proposed only free statistics on stored fields — no new OpenAI call per application, no historical rescore. I approved that scope and rejected the funnel for a later slice (too few later-round outcomes). I then inspected the implementation and tests before treating it as done.
+Key engineering priorities include preserving historical data integrity, enforcing explicit permissions for agent actions, minimizing unnecessary LLM calls, and keeping operating costs predictable.
