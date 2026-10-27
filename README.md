@@ -12,7 +12,7 @@ A Gmail dashboard reads your application emails, groups them into applications w
 
 A low-cost agentic layer sits on top: a daily agent that finds your next steps (follow-ups, thank-yous, interview prep) and an on-demand chat assistant that answers questions about your search. Email drafts and most tracker changes wait for your approval. Silent applications auto-lapse in the tracker (and un-lapse if a later email shows progress); the app never sends email (see "Agentic layer" below).
 
-It is designed as an operator assistant, not an autonomous applier.
+It is designed as an operator assistant, not an autonomous applier. I built it in Cursor with an AI coding agent (see section N).
 
 ## B. Features
 
@@ -25,7 +25,7 @@ It is designed as an operator assistant, not an autonomous applier.
 - On-demand generation of cover letter, why-company, talking points, and bullet candidates
 - Tracker workflow with an explicit "confirm applied" flow, editable applied date, and notes. The tracker is ordered by applied date, newest first; a lapsed or rejected role keeps its applied date, and rows never applied to sort last. Last-updated times live on the dashboard (and in the date tooltip)
 - Tracker import from a spreadsheet (`xlsx`)
-- Top Jobs: daily scan of LinkedIn, Indeed, ZipRecruiter, and Remote Hunter job-alert emails (needs Gmail connected). Only remote or NYC roles that are still open are kept; roles are de-duplicated against the tracker and past applications, scored, and filtered by score. A cheap batched pre-screen ranks queued alert titles first, so the few paid scorings (5 per run, $2/month cap) go to the most promising roles. Listed roles are rechecked and hidden once the posting closes
+- Top Jobs: daily scan of LinkedIn, Indeed, ZipRecruiter, and Remote Hunter job-alert emails (needs Gmail connected). Only remote or NYC roles that are still open are kept; roles are de-duplicated against the tracker and past applications, scored, and filtered by score. A cheap batched pre-screen ranks queued alert titles first, so the few paid scorings (5 per run, $2/month cap) go to the most promising roles. Listed roles are rechecked and hidden once the posting closes. "I applied" confirms you applied today, moves the row onto the tracker, and hides it from Top Jobs
 - Local resume context grounding from files on your machine
 
 **Chrome extension (capture)**
@@ -39,7 +39,7 @@ It is designed as an operator assistant, not an autonomous applier.
 
 - Google OAuth with exactly two scopes: `gmail.readonly` and `gmail.drafts.create` (create drafts only, never send). Full email bodies are never stored, only a per-message classification
 - Free rule-based prefilter, then an LLM classifier: applied, assessment, interview, rejected, offer, other. Calendar invites from company domains count as interviews
-- Groups emails into applications by company and role, tracks status and the furthest stage reached (e.g. "rejected after interviewing"), and flags estimated applied dates when no confirmation email exists. Two openings at one company stay separate when their titles name different specialties ("Content Data Products" vs "AI Platforms and Products"), and a bare "Software Engineer" email only joins an opening when exactly one matches- Interview rounds: each interview email gets a small extra LLM read for the round number, what the round is and who it's with. Emails about the same round (invite, calendar invite, reschedule) are grouped together, and the status shows "Recruiter screen", "2nd round", "3rd round · technical with Jane Doe", or "rejected after 2nd round". Each sync also backfills round details for older interview emails, whatever their age
+- Groups emails into applications by company and role, tracks status and the furthest stage reached (e.g. "rejected after interviewing"), and flags estimated applied dates when no confirmation email exists. Two openings at one company stay separate when their titles name different specialties ("Content Data Products" vs "AI Platforms and Products"), and a bare "Software Engineer" email only joins an opening when exactly one matches. Meeting or stage names ("Initial Screen Call", "Phone Interview") are not treated as job titles- Interview rounds: each interview email gets a small extra LLM read for the round number, what the round is and who it's with. Emails about the same round (invite, calendar invite, reschedule) are grouped together, and the status shows "Recruiter screen", "2nd round", "3rd round · technical with Jane Doe", or "rejected after 2nd round". Each sync also backfills round details for older interview emails, whatever their age
 - Interview vs interviewing: the "Interview" status card counts applications that reached an interview in the window. Being actively in process is shown separately: an "Interviewing" pill (an open application with an upcoming interview or interview email in the last 21 days, otherwise "Interviewed") and an "Interviewing now" list in the upcoming interviews card
 - Upcoming interviews: the top of the dashboard lists confirmed interview times from the last 60 days of email, soonest first, with company, role, round, date and time (with a "Today" / "Tomorrow" / "In N days" badge). Reschedules replace the earlier time; cancelled interviews and rejected roles drop off. Times stated without a timezone use `USER_TIMEZONE` (defaults to your machine's zone)
 - Scoring details: click any fit score to open the full breakdown: category scores, survivability, hard gates and the rules that fired, penalties, extractor output and the stored JD. Scores given before this snapshot existed can be audited with "Run diagnostic re-score", which re-runs the stored JD and saves the result separately. The original score never changes
@@ -95,7 +95,10 @@ Two features act on your behalf, both built so that the model only reads and sug
 **Application insights (dashboard card)**
 
 - Compares the applications that led to a call or interview (a recruiter screen or later, or an offer) with the ones that didn't, across your whole tracker and Gmail history. A Gmail application linked to a tracker row counts once. Assessments alone, rejections, lapsed roles and 30+ days of silence count as no; applications under 30 days old are left out as too early
-- Shows whether the fit score predicts callbacks (callback rate per score tier with plausible ranges, and an AUC check against chance), what the roles that heard back have in common (resume, location and work model, seniority, years asked, employer scale, applicant pool, domain, language gaps, degree, salary, where the posting lives, posting age, day applied), and the good fits (65+) that went quiet
+- Shows whether the fit score predicts callbacks (callback rate per score tier with plausible ranges, and an AUC check against chance, shown with the callback count and a Wilson interval). Headlines stay calibrated: a named test can be called conclusive; the card does not lead with a single "Conclusive" pill. With a small number of callbacks the wording is that the pattern is promising, not a firm apply rule
+- Coverage: how many decided applications have a fit score, how many don't and why (posting not found, fetch failed, unverified match, scoring failed, tracker row never scored, no JD), callbacks among scored vs outside that group, and whether the applied date is confirmed (tracker date or Gmail applied email) or inferred
+- Seniority and screening: campus / new-grad vs junior vs mid vs senior from stored title, years, and existing rules (not a new classifier). Crossed with degree (required vs equivalent vs none). Specialized AI / FDE is a cross-cut, not a seniority band. Cells are descriptive when counts are small
+- Also shows what the roles that heard back have in common (resume, location and work model, seniority, years asked, employer scale, applicant pool, domain, language gaps, degree, salary, where the posting lives, posting age, day applied), and the good fits (65+) that went quiet. Employer scale splits Mid-size from Unknown. Each pattern row shows how many applications could not be classified for that feature
 - Every comparison is tested for chance (Fisher's exact test with a false-discovery correction across all patterns). A pattern is only called conclusive with at least 15 applications on each side, enough responses, and a gap of 10+ points. When nothing clears that bar the card says the differences look like randomness
 - Conclusive patterns that are knowable before you apply become proposal cards. Nothing changes until you approve one; approved adjustments apply only to roles scored from then on (±4 each, ±8 total, never on hard-gated roles), show up as "Your history" in the scoring details, and stay frozen with that role. Existing scores never change, and you can turn an adjustment off at any time
 - Runs weekly after a Gmail sync, or on demand with Re-run. The statistics are free; an optional plain-English summary uses a $0.30/month cap (`INSIGHTS_MONTHLY_BUDGET_USD`), well under a cent per run
@@ -122,6 +125,8 @@ Data integrity:
 
 Scoring:
 
+- A posting that states a field-specific bachelor's as required and a separate "or equivalent" line is scored as conflicting (a middle dock), not as a full equivalent-experience pass
+- A platform/SRE-style title alone no longer puts a role in the infrastructure lane; it needs at least one infrastructure or enablement signal. Product-builder JDs (React/frontend, user experience, LLM features) stay in a product lane. Listings that explicitly ask for personal projects or open source floor employer-recognizability and credential signal when the candidate has a portfolio
 - Go detection no longer fires on English "go" ("evaluations that go beyond benchmarks"). "Golang" always counts; a bare "Go" only counts in a language context: listed with other languages or frameworks, under a `Languages:`/`Stack:` label, alone on a line, or framed as "experience with Go", "Go services", "Strong Go required". One shared detector is used everywhere, including the deterministic extractor that previously copied every match into required skills
 - The seniority hard gate (caps the score at 25) only fires when the posting obviously wants more experience: 5+ minimum years (from the years field or Required text; ranges count by their lower bound), senior-depth asks (capacity planning, performance tuning, memory management…), or people-leadership asks (direct reports, managing a team, years leading). A Senior/Staff/Principal title or Seniority label without those asks is an ambitious stretch, not a gate. An inferred "senior" label with nothing in the posting to back it is flagged for manual review. The heuristic extractor reads seniority from the title only, so body text like "senior client engineers" or "technical staff at our clients" no longer marks a role senior
 - Experience gap: below the gate, the JD's years range is weighed against `screeningYears` in your profile. The dock is 2 points per year under the minimum plus 1 per year the range extends above it (at 2 years: "2–6 years" −4, "2–5 years" −3, "3–5 years" −4, "2+ years" 0; max −8). A mid-level label with no stated years is −3 unless the title says junior/entry/associate/I. The title stretch counts as −8, and the two together are capped at −12
@@ -136,6 +141,7 @@ Gmail dashboard:
 - Calendar invites Gmail renames for new senders ("Invitation from an unknown sender: …") are recognised as interviews; older dropped invites are re-checked automatically
 - Applications split by a mangled company name are merged when they share the same company email domain
 - A new booking after the previous round's interview was held starts the next round, so a follow-up meeting isn't folded into the recruiter screen
+- Interview confirmation phrasing ("your interview with … is confirmed", recruiter/initial screen) is recognised as application mail. A meeting title is not stored as the job title, so it doesn't create a fake opening
 
 ## C. Repo Structure (High-Level)
 
@@ -147,6 +153,7 @@ Gmail dashboard:
   - `src/services/assistant/` - chat assistant (tools, proposal cards, thread storage)
   - `src/services/proposals/` - the only code paths that apply approved actions (tracker status, Gmail draft)
   - `src/services/topJobs/` - alert parsing, pre-screen, location/open checks, budgeted scoring
+  - `src/services/insights/` - callback statistics, coverage and seniority tables, weekly summary
 - `apps/web/` - React + Vite frontend (Dashboard, Add Job, Top Jobs, Tracker)
 - `apps/extension/` - Chrome MV3 side-panel extension (React + Vite)
 - `scripts/` - root helper scripts (eval/regression utilities)
@@ -351,3 +358,15 @@ Before publishing this project publicly:
 Gmail access is read + create drafts; the app cannot send email. Email bodies are fetched on demand and never stored. Only classifications, subjects/senders, and recovered job descriptions are kept in your local Mongo.
 
 This repository is configured so local resume files and common secret/local artifact paths are ignored by git. You are still responsible for reviewing staged files before pushing.
+
+## N. How this was built (Cursor)
+
+I developed Job Search Copilot in **Cursor**, using its coding agent to plan and implement most of the full-stack work (API, scoring, Gmail, React UI). Cursor writes the bulk of the code. I do not type every line, and Cursor does not independently design the product.
+
+Division of responsibility:
+
+- **I decide** behavior, cost, safety, and scope: what to build, what to skip, standing rules (frozen scores, Gmail drafts only, never send, no commit unless I ask), and whether a plan is good enough to implement.
+- **Cursor implements** from an approved plan: explores the repo, drafts slices and file lists, writes the change, and runs tests.
+- **I keep ownership** by reviewing the diff, using the app, debugging when something is wrong, and being able to explain the resulting behavior.
+
+Example: application insights. I wanted richer analytics (seniority tables, a funnel, better models). Cursor measured the existing **$0.30/month** cap and **~$0.003** weekly summary, then proposed only free statistics on stored fields — no new OpenAI call per application, no historical rescore. I approved that scope and rejected the funnel for a later slice (too few later-round outcomes). I then inspected the implementation and tests before treating it as done.

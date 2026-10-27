@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { analyzeInsights, comparePatterns } from "../../services/insights/analyze.js";
 import { applyHistoryPoints, historyPoints, matchAdjustments } from "../../services/insights/applyAdjustments.js";
-import { buildInsightRows, classifyOutcome, trackerAppliedAt, type InsightRow } from "../../services/insights/dataset.js";
+import {
+  applyEvidenceOf,
+  buildInsightRows,
+  classifyOutcome,
+  trackerAppliedAt,
+  unscoredReasonOf,
+  type InsightRow,
+} from "../../services/insights/dataset.js";
 import { mapSpreadsheetStatusToJobStatus } from "../../tracker/canonicalSpreadsheet.js";
-import type { Feature } from "../../services/insights/features.js";
+import type { ApplicationEvaluation } from "../../services/gmail/jdRecovery/evaluations.repository.js";
+import { degreeBucketOf, isSpecializedAiFde, screeningSeniority, type Feature } from "../../services/insights/features.js";
 import type { ScoringAdjustment } from "../../services/insights/insights.repository.js";
-import { runInsights, syncAdjustments, type InsightsDeps } from "../../services/insights/insights.js";
+import { buildSummaryPrompt, runInsights, syncAdjustments, type InsightsDeps } from "../../services/insights/insights.js";
 import { auc, aucPermutationP, benjaminiHochberg, fisherExact, wilson } from "../../services/insights/stats.js";
 import { recomputeStoredJobScore } from "../../lib/recomputeStoredJobScore.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
@@ -209,7 +217,7 @@ const flag: Feature = {
   values: (s) => [(s as InsightRow & { flag?: boolean }).flag ? "Yes" : "No"],
 };
 
-const row = (i: number, positive: boolean, flagged: boolean, fit = 70): InsightRow =>
+const row = (i: number, positive: boolean, flagged: boolean, fit: number | null = 70): InsightRow =>
   ({
     id: `r${i}`,
     company: `Co ${i}`,
@@ -220,8 +228,19 @@ const row = (i: number, positive: boolean, flagged: boolean, fit = 70): InsightR
     source: "tracker",
     fit,
     addedFromGmail: false,
+    applyEvidence: "confirmed",
     flag: flagged,
   }) as InsightRow;
+
+const extracted = (over: Partial<ExtractedJobData> = {}): ExtractedJobData => ({
+  company: "Acme",
+  title: "Software Engineer",
+  stack: [],
+  requiredSkills: [],
+  preferredSkills: [],
+  domainTags: [],
+  ...over,
+});
 
 describe("comparePatterns", () => {
   it("calls a strong, well-sampled difference conclusive", () => {
@@ -257,8 +276,13 @@ describe("comparePatterns", () => {
     ];
     const result = analyzeInsights(rows, new Date(NOW));
     expect(result.scorePredicts.verdict).toBe("conclusive");
-    expect(result.conclusion).toBe("conclusive");
-    expect(result.headline).toMatch(/fit score does predict callbacks/);
+    expect(result.scorePredicts.k).toBe(12);
+    expect(result.scorePredicts.n).toBe(120);
+    expect(result.headline).toMatch(/associated with more callbacks/);
+    expect(result.headline).toMatch(/small number of outcomes/);
+    expect(result.headline).not.toMatch(/^Conclusive/);
+    expect(result.scorePredicts.note).toMatch(/12 of 120 scored/);
+    expect(result.scorePredicts.note).toMatch(/95% range/);
   });
 
   it("says it looks like chance when nothing is conclusive", () => {
@@ -267,6 +291,186 @@ describe("comparePatterns", () => {
     expect(result.conclusion).toBe("no_signal");
     expect(result.headline).toMatch(/chance/);
     expect(result.proposals).toEqual([]);
+  });
+
+  it("splits mid-size from unknown employer and reports unclassified n", () => {
+    const mid = Array.from({ length: 20 }, (_, i) => ({
+      ...row(i, i < 8, false),
+      extracted: extracted({ company: "MidCo", companyEmployeeCount: 800 }),
+    }));
+    const unknown = Array.from({ length: 20 }, (_, i) => ({
+      ...row(100 + i, i < 1, false),
+      extracted: extracted({ company: "Mystery Co" }),
+    }));
+    const blank = Array.from({ length: 6 }, (_, i) => row(200 + i, false, false));
+    const patterns = comparePatterns([...mid, ...unknown, ...blank]);
+    const employer = patterns.filter((p) => p.feature === "employer");
+    expect(employer.map((p) => p.bucket).sort()).toEqual(["Mid-size", "Unknown"]);
+    expect(employer.every((p) => p.unknownN === 6)).toBe(true);
+  });
+});
+
+describe("coverage and apply evidence", () => {
+  it("marks tracker applied dates and Gmail applied emails as confirmed", () => {
+    expect(applyEvidenceOf({ trackerConfirmed: true })).toBe("confirmed");
+    expect(applyEvidenceOf({ gmailSource: "email" })).toBe("confirmed");
+    expect(applyEvidenceOf({ gmailSource: "tracker" })).toBe("confirmed");
+    expect(applyEvidenceOf({ gmailSource: "estimated" })).toBe("inferred");
+    expect(applyEvidenceOf({})).toBe("inferred");
+  });
+
+  it("maps stored recovery reasons and does not invent ones", () => {
+    expect(unscoredReasonOf({ fit: 70, hasExtracted: true, source: "tracker" })).toBeUndefined();
+    expect(unscoredReasonOf({ fit: null, hasExtracted: true, source: "tracker" })).toBe("tracker_never_scored");
+    expect(unscoredReasonOf({ fit: null, hasExtracted: false, source: "tracker" })).toBe("no_jd");
+    expect(unscoredReasonOf({ fit: null, hasExtracted: false, source: "gmail" })).toBe("no_jd");
+    expect(unscoredReasonOf({ fit: null, hasExtracted: false, source: "gmail", recovery: { status: "not_found" } })).toBe(
+      "not_found",
+    );
+    expect(unscoredReasonOf({ fit: null, hasExtracted: false, source: "gmail", recovery: { status: "fetch_failed" } })).toBe(
+      "fetch_failed",
+    );
+    expect(unscoredReasonOf({ fit: null, hasExtracted: false, source: "gmail", recovery: { status: "unverified" } })).toBe(
+      "unverified",
+    );
+    expect(
+      unscoredReasonOf({
+        fit: null,
+        hasExtracted: true,
+        source: "gmail",
+        recovery: { status: "unverified", reason: "triage_failed: timeout" },
+      }),
+    ).toBe("triage_failed");
+  });
+
+  it("records confirmed vs inferred apply dates and why rows have no score", () => {
+    const rows = buildInsightRows(
+      {
+        jobs: [
+          job("dated", { tracker: { appliedAt: daysAgo(40) } }),
+          job("guess", { statusHistory: [], score: undefined }),
+        ],
+        apps: [
+          app("mail", { company: "Mail Co", appliedAtSource: "email" }),
+          app("est", { company: "Est Co", appliedAtSource: "estimated" }),
+        ],
+        evaluations: new Map([
+          [
+            "est",
+            {
+              key: "est",
+              company: "Est Co",
+              role: "Software Engineer",
+              appliedAt: daysAgo(40),
+              recovery: { status: "not_found", attempts: [], serperQueries: 0 },
+            } as unknown as ApplicationEvaluation,
+          ],
+        ]),
+      },
+      NOW,
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get("dated")?.applyEvidence).toBe("confirmed");
+    expect(byId.get("guess")?.applyEvidence).toBe("inferred");
+    expect(byId.get("guess")?.unscoredReason).toBe("tracker_never_scored");
+    expect(byId.get("mail")?.applyEvidence).toBe("confirmed");
+    expect(byId.get("est")?.applyEvidence).toBe("inferred");
+    expect(byId.get("est")?.unscoredReason).toBe("not_found");
+    expect(byId.get("est")?.fit).toBeNull();
+
+    const analysis = analyzeInsights(rows, new Date(NOW));
+    expect(analysis.counts.decided).toBe(rows.length);
+    expect(analysis.counts.withFit).toBe(1);
+    expect(analysis.counts.withoutFit).toBe(3);
+    expect(analysis.counts.confirmedApplied).toBe(2);
+    expect(analysis.counts.inferredApplied).toBe(2);
+    expect(analysis.counts.unscoredReasons).toMatchObject({ tracker_never_scored: 1, not_found: 1, no_jd: 1 });
+  });
+});
+
+describe("seniority and screening", () => {
+  it("buckets campus, junior, mid, and senior from title and years, not a new classifier", () => {
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "New Grad Software Engineer" }) })).toBe(
+      "Campus / new-grad",
+    );
+    expect(screeningSeniority({ fit: null, rules: { strictNewGradPipeline: true } as InsightRow["rules"] })).toBe(
+      "Campus / new-grad",
+    );
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "Software Engineer I" }) })).toBe("Junior / SWE I");
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "Junior Engineer", yearsExperience: { min: 0 } }) })).toBe(
+      "Junior / SWE I",
+    );
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "Software Engineer" }) })).toBe(
+      "Mid / SWE II / unlabeled",
+    );
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "Senior Software Engineer" }) })).toBe("Senior / lead");
+    expect(screeningSeniority({ fit: null, extracted: extracted({ title: "Staff Engineer", yearsExperience: { min: 6 } }) })).toBe(
+      "Senior / lead",
+    );
+    expect(screeningSeniority({ fit: null })).toBeNull();
+  });
+
+  it("treats AI / FDE as a cross-cut and degree as required vs equivalent vs none", () => {
+    expect(degreeBucketOf({ fit: null, extracted: extracted({ degreeRequirement: { level: "required" } }) })).toBe("Required");
+    expect(degreeBucketOf({ fit: null, extracted: extracted({ degreeRequirement: { level: "equivalent_allowed" } }) })).toBe(
+      "Preferred / equivalent",
+    );
+    expect(degreeBucketOf({ fit: null, extracted: extracted() })).toBe("None stated");
+    expect(degreeBucketOf({ fit: null })).toBeNull();
+    expect(isSpecializedAiFde({ fit: null, extracted: extracted({ title: "Forward Deployed Engineer", domainTags: ["saas"] }) })).toBe(
+      true,
+    );
+    expect(isSpecializedAiFde({ fit: null, extracted: extracted({ title: "Junior Software Engineer", domainTags: ["ai"] }) })).toBe(
+      true,
+    );
+    expect(isSpecializedAiFde({ fit: null, extracted: extracted({ title: "Software Engineer" }) })).toBe(false);
+    expect(isSpecializedAiFde({ fit: null })).toBeNull();
+  });
+
+  it("builds a seniority table with degree cross and AI/FDE counts", () => {
+    const rows: InsightRow[] = [
+      { ...row(0, true, false), extracted: extracted({ title: "New Grad Engineer" }) },
+      { ...row(1, false, false), extracted: extracted({ title: "Campus Software Engineer" }) },
+      { ...row(2, true, false), extracted: extracted({ title: "Software Engineer I", degreeRequirement: { level: "required" } }) },
+      { ...row(3, false, false), extracted: extracted({ title: "Junior Engineer" }) },
+      { ...row(4, false, false), extracted: extracted({ title: "Software Engineer" }) },
+      { ...row(5, true, false), extracted: extracted({ title: "Senior Engineer", degreeRequirement: { level: "preferred" } }) },
+      {
+        ...row(6, true, false),
+        extracted: extracted({ title: "Junior Forward Deployed Engineer", domainTags: ["ai"] }),
+      },
+      row(7, false, false),
+    ];
+    const result = analyzeInsights(rows, new Date(NOW));
+    const byBucket = Object.fromEntries(result.screening.seniority.map((c) => [c.bucket, c]));
+    expect(byBucket["Campus / new-grad"]).toMatchObject({ n: 2, k: 1 });
+    expect(byBucket["Junior / SWE I"]).toMatchObject({ n: 3, k: 2 });
+    expect(byBucket["Mid / SWE II / unlabeled"]).toMatchObject({ n: 1, k: 0 });
+    expect(byBucket["Senior / lead"]).toMatchObject({ n: 1, k: 1 });
+    expect(result.screening.seniorityUnknown).toBe(1);
+    expect(result.screening.degree.find((d) => d.bucket === "Required")).toMatchObject({ n: 1, k: 1 });
+    expect(result.screening.specialized).toMatchObject({ n: 1, k: 1, restN: 6 });
+    expect(result.screening.specializedUnknown).toBe(1);
+    expect(result.screening.bySeniorityAndDegree.some((c) => c.seniority === "Junior / SWE I" && c.degree === "Required" && c.n === 1)).toBe(
+      true,
+    );
+  });
+});
+
+describe("weekly summary prompt", () => {
+  it("feeds coverage, seniority, and unknown n into the existing summary call", () => {
+    const rows = [
+      { ...row(0, true, false, 80), extracted: extracted({ title: "Senior Engineer" }) },
+      { ...row(1, false, false, null), applyEvidence: "inferred" as const, unscoredReason: "no_jd" as const },
+      { ...row(2, false, false, 40), extracted: extracted({ title: "Software Engineer I" }) },
+    ];
+    const prompt = buildSummaryPrompt(analyzeInsights(rows, new Date(NOW)));
+    expect(prompt).toMatch(/Coverage: 2 scored, 1 without a score \(no_jd 1\)/);
+    expect(prompt).toMatch(/applied evidence 2 confirmed \/ 1 inferred/);
+    expect(prompt).toMatch(/Seniority \(applied \/ callbacks\):/);
+    expect(prompt).toMatch(/Junior \/ SWE I 0\/1/);
+    expect(prompt).toMatch(/Specialized AI\/FDE:/);
+    expect(prompt).toMatch(/Do not call the whole analysis conclusive/);
   });
 });
 

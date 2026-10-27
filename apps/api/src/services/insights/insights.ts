@@ -103,23 +103,34 @@ export const syncAdjustments = (
 const SummarySchema = z.object({ summary: z.string().trim().min(1).max(900) });
 
 const SUMMARY_SYSTEM_PROMPT = `You explain a job seeker's application statistics in plain English (<=110 words, second person, no bullet points).
-The numbers were already tested for chance with a false-discovery correction. Only call a pattern real if its verdict is "conclusive"; mention "worth watching" ones as tentative. Don't repeat verdict labels or statistics jargon (AUC, q) verbatim; say what they mean. If nothing is conclusive, say plainly that the differences look like randomness and that more applications or responses are needed. Never invent numbers, companies, or causes beyond those given.
+The numbers were already tested for chance with a false-discovery correction. Only call a named pattern real if its verdict is "conclusive"; mention "worth watching" ones as tentative. Never call the whole analysis conclusive. Don't repeat verdict labels or statistics jargon (AUC, q) verbatim; say what they mean. If nothing is conclusive, say plainly that the differences look like randomness and that more applications or responses are needed. Mention coverage gaps (unscored or inferred applies) when they are large. If seniority or AI/FDE numbers are given, say what they show in one sentence and that small callback counts limit confidence. Never invent numbers, companies, or causes beyond those given.
 Return JSON only: {"summary":"..."}`;
+
+const unscoredLine = (reasons: InsightsAnalysis["counts"]["unscoredReasons"]): string => {
+  const parts = Object.entries(reasons)
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([reason, n]) => `${reason} ${n}`);
+  return parts.length ? parts.join(", ") : "none";
+};
 
 export const buildSummaryPrompt = (r: InsightsAnalysis): string =>
   [
     `Decided applications: ${r.counts.decided}; human contact (screen or later): ${r.baseRate.k} (${(r.baseRate.rate * 100).toFixed(1)}%). Still too early: ${r.counts.tooEarly}.`,
-    `Fit score vs callbacks: ${r.scorePredicts.note} Verdict: ${VERDICT_WORDS[r.scorePredicts.verdict]}.`,
+    `Coverage: ${r.counts.withFit} scored, ${r.counts.withoutFit} without a score (${unscoredLine(r.counts.unscoredReasons)}); callbacks ${r.counts.scoredCallbacks} scored / ${r.counts.unscoredCallbacks} unscored; applied evidence ${r.counts.confirmedApplied} confirmed / ${r.counts.inferredApplied} inferred.`,
+    `Fit score vs callbacks: ${r.scorePredicts.note} Named-test verdict: ${VERDICT_WORDS[r.scorePredicts.verdict]}.`,
     `By score tier: ${r.scoreBands.map((b) => `${b.band} ${b.k}/${b.n}`).join("; ")}.`,
+    `Seniority (applied / callbacks): ${r.screening.seniority.map((s) => `${s.bucket} ${s.k}/${s.n}`).join("; ")}; unknown ${r.screening.seniorityUnknown}.`,
+    `Degree: ${r.screening.degree.map((s) => `${s.bucket} ${s.k}/${s.n}`).join("; ")}; unknown ${r.screening.degreeUnknown}.`,
+    `Specialized AI/FDE: ${r.screening.specialized.k}/${r.screening.specialized.n} vs rest ${r.screening.specialized.restK}/${r.screening.specialized.restN}; unknown ${r.screening.specializedUnknown}.`,
     `Good fits (score >= ${GOOD_FIT}): ${r.goodFit.k}/${r.goodFit.n} got human contact.`,
     "Strongest patterns:",
     ...r.patterns
       .slice(0, 6)
       .map(
         (p) =>
-          `- ${p.featureLabel} = ${p.bucket}: ${p.k}/${p.n} vs rest ${p.restK}/${p.restN}, q=${p.q.toFixed(2)}, verdict ${VERDICT_WORDS[p.verdict]}`,
+          `- ${p.featureLabel} = ${p.bucket}: ${p.k}/${p.n} vs rest ${p.restK}/${p.restN}, unknown ${p.unknownN}, q=${p.q.toFixed(2)}, verdict ${VERDICT_WORDS[p.verdict]}`,
       ),
-    `Overall verdict: ${VERDICT_WORDS[r.conclusion]}.`,
+    `Strongest named-test verdict: ${VERDICT_WORDS[r.conclusion]}. Do not call the whole analysis conclusive.`,
   ].join("\n");
 
 export type InsightsDeps = {

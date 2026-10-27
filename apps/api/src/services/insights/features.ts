@@ -55,12 +55,54 @@ const channelOf = (url: string | undefined): string | null => {
   return "Company site / other";
 };
 
-const seniorityOf = (s: FeatureSubject): string | null => {
-  const text = `${lower(s.extracted?.seniority)} ${lower(s.extracted?.title)}`;
-  if (!text.trim()) return null;
-  if (/\b(senior|sr\.?|staff|principal|lead)\b/.test(text)) return "Senior / staff title";
-  if (/\b(junior|jr\.?|entry|new grad|associate|intern)\b|\b(i|1)\b/.test(text)) return "Junior / entry / level I";
-  return "Mid / unlabeled";
+export const SENIORITY_BUCKETS = [
+  "Campus / new-grad",
+  "Junior / SWE I",
+  "Mid / SWE II / unlabeled",
+  "Senior / lead",
+] as const;
+export type SeniorityBucket = (typeof SENIORITY_BUCKETS)[number];
+
+export const DEGREE_BUCKETS = ["Required", "Preferred / equivalent", "None stated"] as const;
+export type DegreeBucket = (typeof DEGREE_BUCKETS)[number];
+
+const CAMPUS_RE = /\b(new[\s-]?grad|campus|university hire|grad(uate)? program)\b/;
+const SENIOR_RE = /\b(senior|sr\.?|staff|principal|lead)\b/;
+const JUNIOR_RE =
+  /\b(junior|jr\.?|entry[\s-]?level|associate|intern)\b|\b(software engineer|swe|engineer)\s+(i|1)\b/;
+
+/** Title + years + new-grad pipeline; campus is separate from ordinary junior openings. */
+export const screeningSeniority = (s: FeatureSubject): SeniorityBucket | null => {
+  const title = `${lower(s.extracted?.seniority)} ${lower(s.extracted?.title)}`;
+  const min = s.extracted?.yearsExperience?.min;
+  if (s.rules?.strictNewGradPipeline || CAMPUS_RE.test(title)) return "Campus / new-grad";
+  if (SENIOR_RE.test(title) || (min != null && min >= 5)) return "Senior / lead";
+  const juniorField = /\b(i|1|junior|jr\.?|entry)\b/.test(lower(s.extracted?.seniority ?? ""));
+  if (JUNIOR_RE.test(title) || juniorField || (min != null && min <= 1)) return "Junior / SWE I";
+  if (title.trim() || min != null) return "Mid / SWE II / unlabeled";
+  return null;
+};
+
+const seniorityOf = (s: FeatureSubject): string | null => screeningSeniority(s);
+
+export const degreeBucketOf = (s: FeatureSubject): DegreeBucket | null => {
+  if (!s.extracted) return null;
+  const level = s.extracted.degreeRequirement?.level;
+  if (level === "required") return "Required";
+  if (level === "preferred" || level === "equivalent_allowed") return "Preferred / equivalent";
+  return "None stated";
+};
+
+const AI_TAG_RE = /\b(ai|ml|llm|machine learning|applied ai)\b/;
+const AI_TITLE_RE = /\b(forward[\s-]?deployed|fde|applied ai|machine learning|ml engineer)\b/;
+
+/** Cross-cut: a role can be junior and specialized AI / FDE at once. */
+export const isSpecializedAiFde = (s: FeatureSubject): boolean | null => {
+  if (!s.extracted && !s.rules) return null;
+  if (s.rules?.researchHeavyAiRole || s.rules?.fdeBuilderSoftwarePrimary) return true;
+  const tags = (s.extracted?.domainTags ?? []).join(" ");
+  if (AI_TAG_RE.test(tags)) return true;
+  return AI_TITLE_RE.test(lower(s.extracted?.title));
 };
 
 const minYearsOf = (s: FeatureSubject): string | null => {
@@ -97,7 +139,8 @@ const employerScaleOf = (s: FeatureSubject): string | null => {
   const scale = resolveEmployerScale(s.extracted);
   if (scale.isLargeEmployer || scale.isBrandName) return "Large / well-known";
   if (scale.isStartupSmallByHeadcount) return "Startup / small team";
-  return "Mid-size / unknown";
+  if (scale.employeeCount != null) return "Mid-size";
+  return "Unknown";
 };
 
 const poolOf = (s: FeatureSubject): string | null => {
@@ -162,11 +205,7 @@ export const FEATURES: Feature[] = [
     key: "degree",
     label: "Degree requirement",
     scorable: true,
-    values: (s) => {
-      const level = s.extracted?.degreeRequirement?.level;
-      if (!s.extracted) return [];
-      return [level === "required" ? "Required" : level === "preferred" || level === "equivalent_allowed" ? "Preferred / equivalent" : "None stated"];
-    },
+    values: (s) => one(degreeBucketOf(s)),
   },
   {
     key: "hardGate",

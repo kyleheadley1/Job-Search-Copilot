@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import type { InsightsPanel, PatternRow, ScoringAdjustment, Verdict } from "../types/insights";
+import type {
+  CoverageCounts,
+  InsightsPanel,
+  PatternRow,
+  ScreeningAnalysis,
+  ScoringAdjustment,
+  UnscoredReason,
+  Verdict,
+} from "../types/insights";
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -25,6 +33,167 @@ function RateBar({ rate, lo, hi, scale }: { rate: number; lo: number; hi: number
   );
 }
 
+const UNSCORED_LABEL: Record<UnscoredReason, string> = {
+  not_found: "posting not found",
+  fetch_failed: "could not fetch JD",
+  unverified: "ambiguous match",
+  triage_failed: "scoring failed",
+  tracker_never_scored: "tracker row never scored",
+  no_jd: "no JD stored",
+};
+
+function CoverageSection({ counts }: { counts: CoverageCounts }) {
+  const withoutFit = counts.withoutFit ?? Math.max(0, counts.decided - counts.withFit);
+  const reasonParts = Object.entries(counts.unscoredReasons ?? {})
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([reason, n]) => `${UNSCORED_LABEL[reason as UnscoredReason] ?? reason} ${n}`);
+  return (
+    <section className="stack" style={{ gap: "0.35rem" }}>
+      <strong className="smallText">What this analysis covers</strong>
+      <table className="table smallText">
+        <tbody>
+          <tr>
+            <td>Decided applications</td>
+            <td>{counts.decided}</td>
+          </tr>
+          <tr>
+            <td>With fit score</td>
+            <td>{counts.withFit}</td>
+          </tr>
+          <tr>
+            <td>Without fit score</td>
+            <td>{withoutFit}</td>
+          </tr>
+          {counts.scoredCallbacks != null && (
+            <tr>
+              <td>Callbacks among scored</td>
+              <td>{counts.scoredCallbacks}</td>
+            </tr>
+          )}
+          {counts.unscoredCallbacks != null && (
+            <tr>
+              <td>Callbacks outside scored group</td>
+              <td>{counts.unscoredCallbacks}</td>
+            </tr>
+          )}
+          <tr>
+            <td>Recent, not yet mature</td>
+            <td>{counts.tooEarly}</td>
+          </tr>
+          {counts.confirmedApplied != null && (
+            <tr>
+              <td>Confirmed applied date</td>
+              <td>{counts.confirmedApplied}</td>
+            </tr>
+          )}
+          {counts.inferredApplied != null && (
+            <tr>
+              <td>Inferred applied date</td>
+              <td>{counts.inferredApplied}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {reasonParts.length > 0 && <span className="muted smallText">Why no score: {reasonParts.join(" · ")}</span>}
+    </section>
+  );
+}
+
+function ScreeningSection({ screening }: { screening: ScreeningAnalysis }) {
+  const spec = screening.specialized;
+  return (
+    <section className="stack" style={{ gap: "0.35rem" }}>
+      <strong className="smallText">Seniority and screening</strong>
+      <span className="muted smallText">
+        Descriptive rates only — with few callbacks, cells are not a hiring rule. Campus programs are separate from
+        ordinary junior openings. AI / FDE is a cross-cut, not a seniority band.
+      </span>
+      <table className="table smallText">
+        <thead>
+          <tr>
+            <th>Role classification</th>
+            <th>Applied</th>
+            <th>Callbacks</th>
+            <th>Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(screening.seniority ?? []).map((row) => (
+            <tr key={row.bucket}>
+              <td>{row.bucket}</td>
+              <td>{row.n}</td>
+              <td>{row.k}</td>
+              <td title={`95% range ${pct(row.rate.lo)}-${pct(row.rate.hi)}`}>{row.n ? pct(row.rate.rate) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {screening.seniorityUnknown > 0 && (
+        <span className="muted smallText">{screening.seniorityUnknown} decided applications have no seniority signal.</span>
+      )}
+      <table className="table smallText">
+        <thead>
+          <tr>
+            <th>Degree on the posting</th>
+            <th>Applied</th>
+            <th>Callbacks</th>
+            <th>Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(screening.degree ?? []).map((row) => (
+            <tr key={row.bucket}>
+              <td>{row.bucket}</td>
+              <td>{row.n}</td>
+              <td>{row.k}</td>
+              <td title={`95% range ${pct(row.rate.lo)}-${pct(row.rate.hi)}`}>{row.n ? pct(row.rate.rate) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {screening.degreeUnknown > 0 && (
+        <span className="muted smallText">{screening.degreeUnknown} decided applications have no degree field.</span>
+      )}
+      {spec && (
+        <span className="smallText">
+          Specialized AI / FDE: {spec.k}/{spec.n} ({spec.n ? pct(spec.rate.rate) : "—"}) vs {spec.restK}/{spec.restN} other
+          classified roles
+          {screening.specializedUnknown > 0 ? `; ${screening.specializedUnknown} unclassified` : ""}.
+        </span>
+      )}
+      {(screening.bySeniorityAndDegree ?? []).some((c) => c.n > 0) && (
+        <details>
+          <summary className="smallText">Seniority × degree</summary>
+          <table className="table smallText">
+            <thead>
+              <tr>
+                <th>Seniority</th>
+                <th>Degree</th>
+                <th>Applied</th>
+                <th>Callbacks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(screening.bySeniorityAndDegree ?? [])
+                .filter((c) => c.n > 0)
+                .map((c) => (
+                  <tr key={`${c.seniority}|${c.degree}`}>
+                    <td>{c.seniority}</td>
+                    <td>{c.degree}</td>
+                    <td>{c.n}</td>
+                    <td>
+                      {c.k} ({pct(c.rate.rate)})
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function PatternTable({ rows }: { rows: PatternRow[] }) {
   return (
     <table className="table smallText">
@@ -41,6 +210,7 @@ function PatternTable({ rows }: { rows: PatternRow[] }) {
           <tr key={`${p.feature}=${p.bucket}`}>
             <td>
               <span className="muted">{p.featureLabel}:</span> {p.bucket}
+              {(p.unknownN ?? 0) > 0 && <div className="muted smallText">{p.unknownN} unclassified</div>}
             </td>
             <td title={`95% range ${pct(p.rate.lo)}-${pct(p.rate.hi)}`}>
               {p.k}/{p.n} ({pct(p.rate.rate)})
@@ -183,10 +353,7 @@ export function InsightsCard({ children }: { children?: ReactNode }) {
       ) : (
         <>
           <div className="stack" style={{ gap: "0.35rem" }}>
-            <span>
-              <span className={`pill ${VERDICT[run.conclusion].pill}`}>{VERDICT[run.conclusion].label}</span>{" "}
-              {run.headline}
-            </span>
+            <span>{run.headline}</span>
             {run.summary && <p className="smallText" style={{ margin: 0 }}>{run.summary}</p>}
             <span className="muted smallText">
               Heard back means a call or interview was offered: a recruiter screen or later, or an offer. An agency's
@@ -195,9 +362,25 @@ export function InsightsCard({ children }: { children?: ReactNode }) {
             </span>
           </div>
 
+          <CoverageSection counts={run.counts} />
+          {run.screening && <ScreeningSection screening={run.screening} />}
+
           <section className="stack" style={{ gap: "0.35rem" }}>
             <strong className="smallText">Does the fit score predict callbacks?</strong>
             <span className="smallText">{run.scorePredicts.note}</span>
+            {run.scorePredicts.k != null && run.scorePredicts.rate && (
+              <span className="muted smallText">
+                Scored callbacks {run.scorePredicts.k}/{run.scorePredicts.n} ({pct(run.scorePredicts.rate.rate)}; 95%{" "}
+                {pct(run.scorePredicts.rate.lo)}–{pct(run.scorePredicts.rate.hi)}). AUC {run.scorePredicts.auc.toFixed(2)}.
+                {run.scorePredicts.verdict !== "no_signal" && (
+                  <>
+                    {" "}
+                    Named test:{" "}
+                    <span className={`pill ${VERDICT[run.scorePredicts.verdict].pill}`}>{VERDICT[run.scorePredicts.verdict].label}</span>
+                  </>
+                )}
+              </span>
+            )}
             <div className="insightBands">
               {run.scoreBands.map((b) => (
                 <div key={b.band} className="insightBand smallText" title={`95% range ${pct(b.rate.lo)}-${pct(b.rate.hi)}`}>

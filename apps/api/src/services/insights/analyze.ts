@@ -2,8 +2,16 @@ import { RECOMMENDATION_LABELS } from "../../config/capabilitySurvivabilityPolic
 import { recommendationForScore } from "../../lib/compositeScoring.js";
 import { MAX_POINTS_PER_ADJUSTMENT } from "../../lib/historyAdjustments.js";
 import { RECOMMENDATIONS } from "../../types/scoring.js";
-import type { InsightRow } from "./dataset.js";
-import { FEATURES, type Feature } from "./features.js";
+import type { InsightRow, UnscoredReason } from "./dataset.js";
+import {
+  DEGREE_BUCKETS,
+  FEATURES,
+  SENIORITY_BUCKETS,
+  degreeBucketOf,
+  isSpecializedAiFde,
+  screeningSeniority,
+  type Feature,
+} from "./features.js";
 import { auc, aucPermutationP, benjaminiHochberg, fisherExact, wilson, type Interval } from "./stats.js";
 
 /** Smallest group compared at all, and the size a pattern needs before it can be called. */
@@ -33,6 +41,8 @@ export type PatternRow = {
   p: number;
   q: number;
   verdict: Verdict;
+  /** Decided rows that have no value for this feature. */
+  unknownN: number;
 };
 
 export type ScoreBand = { band: string; k: number; n: number; rate: Interval };
@@ -46,12 +56,42 @@ export type ProposedAdjustment = {
   evidence: { k: number; n: number; rate: number; restRate: number; diffPp: number; q: number };
 };
 
+export type CoverageCounts = {
+  applications: number;
+  positive: number;
+  negative: number;
+  tooEarly: number;
+  decided: number;
+  withFit: number;
+  withoutFit: number;
+  scoredCallbacks: number;
+  unscoredCallbacks: number;
+  confirmedApplied: number;
+  inferredApplied: number;
+  unscoredReasons: Partial<Record<UnscoredReason, number>>;
+};
+
+export type ScreeningCell = { bucket: string; k: number; n: number; rate: Interval };
+
+export type ScreeningCross = { seniority: string; degree: string; k: number; n: number; rate: Interval };
+
+export type ScreeningAnalysis = {
+  seniority: ScreeningCell[];
+  seniorityUnknown: number;
+  degree: ScreeningCell[];
+  degreeUnknown: number;
+  specialized: { k: number; n: number; rate: Interval; restK: number; restN: number };
+  specializedUnknown: number;
+  bySeniorityAndDegree: ScreeningCross[];
+};
+
 export type InsightsAnalysis = {
   generatedAt: string;
-  counts: { applications: number; positive: number; negative: number; tooEarly: number; decided: number; withFit: number };
+  counts: CoverageCounts;
   baseRate: Interval & { k: number; n: number };
   scoreBands: ScoreBand[];
-  scorePredicts: { auc: number; p: number; n: number; verdict: Verdict; note: string };
+  scorePredicts: { auc: number; p: number; n: number; k: number; rate: Interval; verdict: Verdict; note: string };
+  screening: ScreeningAnalysis;
   patterns: PatternRow[];
   goodFit: { k: number; n: number; rate: Interval; patterns: PatternRow[] };
   proposals: ProposedAdjustment[];
@@ -107,6 +147,7 @@ export const comparePatterns = (rows: InsightRow[], features: Feature[] = FEATUR
         restRate,
         diffPp: Math.round((rate.rate - restRate) * 1000) / 10,
         p: fisherExact(k, inB.length - k, restK, rest.length - restK),
+        unknownN: decided.length - tagged.length,
       });
     }
   }
@@ -122,22 +163,83 @@ const pointsFor = (diffPp: number) =>
 const headlineFor = (a: Omit<InsightsAnalysis, "headline" | "conclusion">): string => {
   if (a.baseRate.n === 0) return "No decided applications yet.";
   const base = `${a.baseRate.k} of ${a.baseRate.n} decided applications led to a call or interview (${pct(a.baseRate.rate)}).`;
-  const top = a.scoreBands[0];
   const score =
-    a.scorePredicts.verdict === "conclusive"
-      ? ` Your fit score does predict callbacks${top && top.n > 0 ? ` (${top.band}: ${pct(top.rate.rate)})` : ""}.`
-      : a.scorePredicts.verdict === "suggestive"
-        ? " Higher fit scores may get more callbacks, but it isn't conclusive."
-        : "";
+    a.scorePredicts.verdict === "no_signal"
+      ? ""
+      : " Higher fit scores are associated with more callbacks, but the small number of outcomes limits confidence.";
   const all = [...a.patterns, ...a.goodFit.patterns];
   const clear = all.find((p) => p.verdict === "conclusive");
   if (clear) {
-    return `${base}${score} Clear pattern: ${clear.featureLabel} = ${clear.bucket} (${pct(clear.rate.rate)} vs ${pct(clear.restRate)}).`;
+    return `${base}${score} One named test stands out: ${clear.featureLabel} = ${clear.bucket} (${pct(clear.rate.rate)} vs ${pct(clear.restRate)}).`;
   }
-  if (all.some((p) => p.verdict === "suggestive")) return `${base}${score} Some patterns are worth watching, but none is conclusive yet.`;
+  if (all.some((p) => p.verdict === "suggestive")) {
+    return `${base}${score} Some patterns are worth watching, but none meets the conclusive threshold.`;
+  }
   return score
     ? `${base}${score} Beyond the score, no trait stands out from chance.`
     : `${base} No pattern stands out from chance: callbacks look mostly random with respect to everything measured.`;
+};
+
+const tally = <T extends string>(rows: InsightRow[], of: (r: InsightRow) => T | null): { cells: ScreeningCell[]; unknown: number } => {
+  const decided = rows.filter((r) => r.outcome !== "too_early");
+  const counts = new Map<T, { k: number; n: number }>();
+  let unknown = 0;
+  for (const r of decided) {
+    const bucket = of(r);
+    if (!bucket) {
+      unknown += 1;
+      continue;
+    }
+    const cur = counts.get(bucket) ?? { k: 0, n: 0 };
+    counts.set(bucket, { k: cur.k + (r.outcome === "positive" ? 1 : 0), n: cur.n + 1 });
+  }
+  return {
+    cells: [...counts.entries()].map(([bucket, { k, n }]) => ({ bucket, k, n, rate: wilson(k, n) })),
+    unknown,
+  };
+};
+
+const buildScreening = (rows: InsightRow[]): ScreeningAnalysis => {
+  const decided = rows.filter((r) => r.outcome !== "too_early");
+  const seniorityTally = tally(rows, screeningSeniority);
+  const degreeTally = tally(rows, degreeBucketOf);
+  const seniority = SENIORITY_BUCKETS.map((bucket) => seniorityTally.cells.find((c) => c.bucket === bucket) ?? { bucket, k: 0, n: 0, rate: wilson(0, 0) });
+  const degree = DEGREE_BUCKETS.map((bucket) => degreeTally.cells.find((c) => c.bucket === bucket) ?? { bucket, k: 0, n: 0, rate: wilson(0, 0) });
+
+  const bySeniorityAndDegree: ScreeningCross[] = [];
+  for (const sen of SENIORITY_BUCKETS) {
+    for (const deg of DEGREE_BUCKETS) {
+      const inCell = decided.filter((r) => screeningSeniority(r) === sen && degreeBucketOf(r) === deg);
+      const k = inCell.filter((r) => r.outcome === "positive").length;
+      bySeniorityAndDegree.push({ seniority: sen, degree: deg, k, n: inCell.length, rate: wilson(k, inCell.length) });
+    }
+  }
+
+  let specializedUnknown = 0;
+  const specializedRows: InsightRow[] = [];
+  const restRows: InsightRow[] = [];
+  for (const r of decided) {
+    const flag = isSpecializedAiFde(r);
+    if (flag == null) specializedUnknown += 1;
+    else if (flag) specializedRows.push(r);
+    else restRows.push(r);
+  }
+  const specK = specializedRows.filter((r) => r.outcome === "positive").length;
+  return {
+    seniority,
+    seniorityUnknown: seniorityTally.unknown,
+    degree,
+    degreeUnknown: degreeTally.unknown,
+    specialized: {
+      k: specK,
+      n: specializedRows.length,
+      rate: wilson(specK, specializedRows.length),
+      restK: restRows.filter((r) => r.outcome === "positive").length,
+      restN: restRows.length,
+    },
+    specializedUnknown,
+    bySeniorityAndDegree,
+  };
 };
 
 const strongest = (verdicts: Verdict[]): Verdict =>
@@ -161,12 +263,11 @@ export const analyzeInsights = (rows: InsightRow[], now = new Date()): InsightsA
   const aucP = fitPositives >= MIN_POSITIVES && fitPositives < labels.length ? aucPermutationP(scores, labels) : 1;
   const scoreVerdict: Verdict =
     fitPositives < MIN_POSITIVES ? "no_signal" : aucP < CONCLUSIVE_Q ? "conclusive" : aucP < SUGGESTIVE_Q ? "suggestive" : "no_signal";
+  const scoredRate = wilson(fitPositives, withFit.length);
   const scoreNote =
-    scoreVerdict === "conclusive"
-      ? `Higher scores do get more callbacks (AUC ${aucValue.toFixed(2)}).`
-      : scoreVerdict === "suggestive"
-        ? `Higher scores may get slightly more callbacks (AUC ${aucValue.toFixed(2)}), but it isn't conclusive.`
-        : `The score doesn't separate callbacks from silence better than chance (AUC ${aucValue.toFixed(2)}; 0.5 = coin flip).`;
+    scoreVerdict === "no_signal"
+      ? `The score doesn't separate callbacks from silence better than chance (AUC ${aucValue.toFixed(2)}; ${fitPositives} callbacks among ${withFit.length} scored).`
+      : `Higher fit scores are associated with more callbacks (AUC ${aucValue.toFixed(2)}; ${fitPositives} of ${withFit.length} scored, 95% range ${pct(scoredRate.lo)}–${pct(scoredRate.hi)}). The observed pattern is promising, but the small number of positive outcomes limits confidence in its magnitude and stability.`;
 
   const patterns = comparePatterns(rows);
   const good = rows.filter((r) => r.fit != null && r.fit >= GOOD_FIT);
@@ -185,6 +286,12 @@ export const analyzeInsights = (rows: InsightRow[], now = new Date()): InsightsA
       evidence: { k: p.k, n: p.n, rate: p.rate.rate, restRate: p.restRate, diffPp: p.diffPp, q: p.q },
     }));
 
+  const unscoredReasons: CoverageCounts["unscoredReasons"] = {};
+  for (const r of decided.filter((item) => item.fit == null)) {
+    const reason = r.unscoredReason ?? "no_jd";
+    unscoredReasons[reason] = (unscoredReasons[reason] ?? 0) + 1;
+  }
+
   const partial = {
     generatedAt: now.toISOString(),
     counts: {
@@ -194,10 +301,25 @@ export const analyzeInsights = (rows: InsightRow[], now = new Date()): InsightsA
       tooEarly: rows.length - decided.length,
       decided: decided.length,
       withFit: withFit.length,
+      withoutFit: decided.length - withFit.length,
+      scoredCallbacks: withFit.filter((r) => r.outcome === "positive").length,
+      unscoredCallbacks: decided.filter((r) => r.outcome === "positive" && r.fit == null).length,
+      confirmedApplied: decided.filter((r) => r.applyEvidence === "confirmed").length,
+      inferredApplied: decided.filter((r) => r.applyEvidence === "inferred").length,
+      unscoredReasons,
     },
     baseRate: { ...wilson(positive, decided.length), k: positive, n: decided.length },
     scoreBands,
-    scorePredicts: { auc: aucValue, p: aucP, n: withFit.length, verdict: scoreVerdict, note: scoreNote },
+    scorePredicts: {
+      auc: aucValue,
+      p: aucP,
+      n: withFit.length,
+      k: fitPositives,
+      rate: scoredRate,
+      verdict: scoreVerdict,
+      note: scoreNote,
+    },
+    screening: buildScreening(rows),
     patterns,
     goodFit: { k: goodK, n: goodDecided.length, rate: wilson(goodK, goodDecided.length), patterns: goodPatterns },
     proposals,

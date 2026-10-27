@@ -2,13 +2,23 @@ import type { ExtractedJobData, JobRecord, JobStatus } from "../../types/job.js"
 import type { StoredResumeType } from "../../types/resume.js";
 import type { RuleEvaluation, ScoreBreakdown } from "../../types/scoring.js";
 import { isAtsSender } from "../gmail/gmailClassifier.js";
-import { normalizeCompany, sameCompany, type GmailApplication } from "../gmail/gmailApplications.js";
+import { normalizeCompany, sameCompany, type AppliedAtSource, type GmailApplication } from "../gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../gmail/jdRecovery/evaluations.repository.js";
 
 /** Applied this recently with no human contact yet: too early to call. */
 export const DECISION_DAYS = 30;
 
 export type Outcome = "positive" | "negative" | "too_early";
+
+export type ApplyEvidence = "confirmed" | "inferred";
+
+export type UnscoredReason =
+  | "not_found"
+  | "fetch_failed"
+  | "unverified"
+  | "triage_failed"
+  | "tracker_never_scored"
+  | "no_jd";
 
 export type InsightRow = {
   id: string;
@@ -25,6 +35,10 @@ export type InsightRow = {
   recommendedResume?: StoredResumeType;
   postingUrl?: string;
   addedFromGmail: boolean;
+  /** Tracker applied date or a Gmail "applied" confirmation, vs a first-email guess. */
+  applyEvidence: ApplyEvidence;
+  /** Why this decided row has no fit score; absent when scored. */
+  unscoredReason?: UnscoredReason;
 };
 
 const HUMAN_STAGES = new Set<JobStatus>(["interviewing", "offer"]);
@@ -123,6 +137,39 @@ export const trackerAppliedAt = (job: JobRecord): string | null => {
   return APPLIED_STATUSES.has(job.status) ? job.createdAt : null;
 };
 
+/** A stored applied date (manual, spreadsheet, or first move to applied), not a createdAt fallback. */
+export const trackerHasConfirmedAppliedAt = (job: JobRecord): boolean => {
+  if (job.tracker?.appliedAt) return true;
+  if (isoDay(job.tracker?.notes?.match(/applied on (\d{4}-\d{2}-\d{2})/i)?.[0]) ?? isoDay(job.trackerSpreadsheet?.discussed)) {
+    return true;
+  }
+  return (job.statusHistory ?? []).some((h) => h.toStatus === "applied");
+};
+
+export const applyEvidenceOf = (opts: {
+  trackerConfirmed?: boolean;
+  gmailSource?: AppliedAtSource;
+}): ApplyEvidence => {
+  if (opts.trackerConfirmed) return "confirmed";
+  if (opts.gmailSource === "email" || opts.gmailSource === "tracker") return "confirmed";
+  return "inferred";
+};
+
+export const unscoredReasonOf = (opts: {
+  fit: number | null;
+  hasExtracted: boolean;
+  source: InsightRow["source"];
+  recovery?: { status?: string; reason?: string };
+}): UnscoredReason | undefined => {
+  if (opts.fit != null) return undefined;
+  const recoveryReason = opts.recovery?.reason ?? "";
+  if (/^triage_failed/i.test(recoveryReason)) return "triage_failed";
+  const status = opts.recovery?.status;
+  if (status === "not_found" || status === "fetch_failed" || status === "unverified") return status;
+  if (opts.source === "gmail") return "no_jd";
+  return opts.hasExtracted ? "tracker_never_scored" : "no_jd";
+};
+
 const fromJob = (job: JobRecord) => {
   const { rawText: _rawText, ...extracted } = job.extracted;
   return {
@@ -184,6 +231,8 @@ export const buildInsightRows = (
       now,
     );
     const data = job ? fromJob(job) : fromEvaluation(evaluation);
+    const source = job ? "tracker+gmail" : "gmail";
+    const fit = data.fit ?? evaluation?.fit?.total ?? null;
     rows.push({
       id: job?.id ?? app.key,
       company: app.company,
@@ -191,11 +240,21 @@ export const buildInsightRows = (
       appliedAt,
       outcome,
       outcomeReason: reason,
-      source: job ? "tracker+gmail" : "gmail",
+      source,
       ...data,
-      fit: data.fit ?? evaluation?.fit?.total ?? null,
+      fit,
       postingUrl: job?.extracted.url ?? evaluation?.recovery.url,
       addedFromGmail: job?.tracker?.source === "gmail",
+      applyEvidence: applyEvidenceOf({
+        trackerConfirmed: job ? trackerHasConfirmedAppliedAt(job) : false,
+        gmailSource: app.appliedAtSource,
+      }),
+      unscoredReason: unscoredReasonOf({
+        fit,
+        hasExtracted: Boolean(data.extracted),
+        source,
+        recovery: evaluation?.recovery,
+      }),
     });
   }
 
@@ -212,6 +271,7 @@ export const buildInsightRows = (
       },
       now,
     );
+    const data = fromJob(job);
     rows.push({
       id: job.id,
       company: job.extracted.companyDisplayName || job.extracted.company,
@@ -220,9 +280,15 @@ export const buildInsightRows = (
       outcome,
       outcomeReason: reason,
       source: "tracker",
-      ...fromJob(job),
+      ...data,
       postingUrl: job.extracted.url,
       addedFromGmail: job.tracker?.source === "gmail",
+      applyEvidence: applyEvidenceOf({ trackerConfirmed: trackerHasConfirmedAppliedAt(job) }),
+      unscoredReason: unscoredReasonOf({
+        fit: data.fit,
+        hasExtracted: Boolean(job.extracted),
+        source: "tracker",
+      }),
     });
   }
   return rows;
