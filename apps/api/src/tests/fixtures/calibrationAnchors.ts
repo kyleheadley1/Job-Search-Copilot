@@ -64,6 +64,7 @@ export const CALIBRATION_FIXTURES = {
   cherryTechnologiesMidLevel: "cherryTechnologiesMidLevel.json",
   worldquantFullStackDeveloper: "worldquantFullStackDeveloper.json",
   wexSde1ResidencyRadiusGate: "wexSde1ResidencyRadiusGate.json",
+  arbitalHealthFullStack: "arbitalHealthFullStack.json",
 } as const;
 
 export type CalibrationFixtureKey = keyof typeof CALIBRATION_FIXTURES;

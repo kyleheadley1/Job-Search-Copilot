@@ -32,6 +32,7 @@ import {
 } from '../../lib/jdTextHash.js';
 import { storedCategoryScores } from '../../lib/recomputeStoredJobScore.js';
 import { recommendationForScore } from '../../lib/compositeScoring.js';
+import { sealAuthoritativeScore } from '../../lib/authoritativeScore.js';
 import {
   applyHistoryPoints,
   loadApprovedAdjustments,
@@ -200,32 +201,21 @@ export const triageJob = async (input: {
     scoredRecommendation = recommendationForScore(scoredScore.total);
   }
 
-  const salaryStart = Date.now();
-  const salaryAsk = computeSalaryAsk({
-    extracted,
-    score: scoredScore,
-    recommendation: scoredRecommendation,
-    rules: scoredRulesFinal,
-  });
-  stageMs.salary = Date.now() - salaryStart;
-
   const referralPathway = detectReferralPathway({
     profile: userProfile,
     extracted,
     resumeText: finalResumeText,
   });
 
-  const finalRecommendation = scoredRecommendation;
-
   const scoreDisplayFinal = buildScoreDisplay({
     score: scoredScore,
     rules: scoredRulesFinal,
     extracted,
     profile: userProfile,
-    recommendation: finalRecommendation,
+    recommendation: scoredRecommendation,
   });
 
-  const scoreWithDisplay = scoreDisplayFinal
+  const withDisplay: ScoreBreakdown = scoreDisplayFinal
     ? {
         ...scoredScore,
         scoreDisplay: scoreDisplayFinal,
@@ -233,8 +223,23 @@ export const triageJob = async (input: {
       }
     : {
         ...scoredScore,
-        recommendationLabel: RECOMMENDATION_LABELS[finalRecommendation],
+        recommendationLabel: RECOMMENDATION_LABELS[scoredRecommendation],
       };
+  const sealed = sealAuthoritativeScore({
+    score: withDisplay,
+    recommendation: scoredRecommendation,
+  });
+  const scoreWithDisplay = sealed.score;
+  const finalRecommendation = sealed.recommendation;
+
+  const salaryStart = Date.now();
+  const salaryAsk = computeSalaryAsk({
+    extracted,
+    score: scoreWithDisplay,
+    recommendation: finalRecommendation,
+    rules: scoredRulesFinal,
+  });
+  stageMs.salary = Date.now() - salaryStart;
 
   const scoringJdTextHash =
     scoringLlmSucceeded && currentJdTextHash

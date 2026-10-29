@@ -150,3 +150,67 @@ describe("title/responsibility seniority — NYT Reflections (supported feature 
     ).toBe(false);
   });
 });
+
+describe("title/responsibility seniority — early-career FDE ramp", () => {
+  it("does not penalize an explicit 0–3 year FDE role that learns under experienced FDEs", () => {
+    const extracted = {
+      company: "Trunk Tools",
+      title: "Forward Deployed Engineer",
+      stack: ["TypeScript"],
+      requiredSkills: ["TypeScript"],
+      preferredSkills: [],
+      domainTags: [],
+      yearsExperience: { min: 0, max: 3, raw: "0-3 years" },
+      seniority: "entry",
+      responsibilities: ["Learn under experienced FDEs while delivering customer deployments."],
+      requirements: ["0–3 years of experience. Early-career role with mentorship."],
+      rawText:
+        "Forward Deployed Engineer. Early-career role requiring 0 to 3 years of software experience. You will be learning under experienced FDEs.",
+    };
+    const evaled = evaluateTitleResponsibilitySeniority(extracted);
+    expect(evaled.statedEarlyCareer).toBe(true);
+    expect(evaled.hasManagedTeamStructure).toBe(true);
+    expect(evaled.mismatch).toBe(false);
+  });
+
+  it("still flags an early-tagged FDE with unsupervised ownership and no support", () => {
+    const extracted = {
+      company: "Afresh",
+      title: "Forward Deployed Engineer",
+      stack: ["Python"],
+      requiredSkills: ["Python"],
+      preferredSkills: [],
+      domainTags: [],
+      yearsExperience: { min: 0, max: 3, raw: "0-3 years" },
+      seniority: "entry",
+      responsibilities: ["Own deployments end to end. Decide what done means."],
+      requirements: ["0–3 years of experience."],
+      rawText:
+        "Forward Deployed Engineer. 0–3 years of experience. Own deployments end to end. Decide what done means.",
+    };
+    const evaled = evaluateTitleResponsibilitySeniority(extracted);
+    expect(evaled.highAutonomy).toBe(true);
+    expect(evaled.mismatch).toBe(true);
+  });
+
+  it("does not suppress a Senior FDE title even when the listing also uses a 0–3 year range", () => {
+    const extracted = {
+      company: "Afresh",
+      title: "Senior Forward Deployed Engineer",
+      stack: ["Python"],
+      requiredSkills: ["Python"],
+      preferredSkills: [],
+      domainTags: [],
+      yearsExperience: { min: 0, max: 3, raw: "0-3 years" },
+      seniority: "entry",
+      responsibilities: ["Own deployments end to end. Decide what done means."],
+      requirements: ["0–3 years of experience. Own deployments end to end."],
+      rawText:
+        "Senior Forward Deployed Engineer. 0 to 3 years of experience. Own deployments end to end. Decide what done means.",
+    };
+    const evaled = evaluateTitleResponsibilitySeniority(extracted);
+    expect(evaled.titleBand).toBeGreaterThanOrEqual(2);
+    expect(evaled.highAutonomy).toBe(true);
+    expect(evaled.mismatch).toBe(true);
+  });
+});

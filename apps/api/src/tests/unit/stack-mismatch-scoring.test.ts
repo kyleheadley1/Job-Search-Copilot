@@ -219,6 +219,65 @@ describe("stack mismatch two-tier detection", () => {
   });
 });
 
+describe("mixed-stack language classification", () => {
+  const claimableWithoutPython = () => {
+    const full = deriveClaimableStackFromText(SWE_RESUME);
+    return { ...full, skills: full.skills.filter((s) => s.id !== "python") };
+  };
+
+  it("Meow-style TypeScript/React/Python inventory is not a Python core gap", () => {
+    const extracted = makeJob({
+      company: "Meow",
+      title: "Full-Stack Engineer",
+      stack: ["TypeScript", "React", "Python", "Postgres", "AWS"],
+      requiredSkills: ["TypeScript", "React", "Python"],
+      requirements: [
+        "Comfortable working across both front-end and back-end",
+        "Our tech stack: TypeScript, React, Python (FastAPI), Postgres, AWS",
+      ],
+      rawText: [
+        "Full-Stack Engineer at Meow.",
+        "Comfortable working across both front-end and back-end.",
+        "Our tech stack: TypeScript, React, Python (FastAPI), Postgres, AWS.",
+      ].join("\n"),
+    });
+    const analysis = analyzeStackMismatch(extracted, claimableWithoutPython());
+    expect(analysis.coreLanguageGap).not.toContain("Python");
+    expect(analysis.tier).not.toBe("tier1_core_language");
+  });
+
+  it("FastAPI-heavy Python backend still treats Python as a core language", () => {
+    const extracted = makeJob({
+      company: "DataCamp",
+      title: "Backend Engineer",
+      stack: ["Python", "FastAPI", "Postgres"],
+      requiredSkills: ["Python", "FastAPI"],
+      requirements: [
+        "Professional experience with Python required",
+        "Build production APIs with FastAPI",
+      ],
+      rawText: [
+        "Backend Engineer. Professional experience with Python required.",
+        "Build production APIs with FastAPI and Postgres.",
+      ].join("\n"),
+    });
+    const analysis = analyzeStackMismatch(extracted, claimableWithoutPython());
+    expect(analysis.coreLanguageGap).toContain("Python");
+    expect(analysis.tier).toBe("tier1_core_language");
+  });
+
+  it("must-have conjunctive Python with TypeScript stays required", () => {
+    const extracted = makeJob({
+      title: "Full-Stack Engineer",
+      stack: ["TypeScript", "Python"],
+      requiredSkills: ["TypeScript", "Python"],
+      requirements: ["Must have experience with TypeScript, React, and Python"],
+      rawText: "Must have experience with TypeScript, React, and Python.",
+    });
+    expect(analyzeStackMismatch(extracted, claimableWithoutPython()).coreLanguageGap).toContain("Python");
+  });
+});
+
 describe("seniority reconciliation", () => {
   it("reconciles junior title when parsed seniority conflicts", () => {
     const job = makeJob({

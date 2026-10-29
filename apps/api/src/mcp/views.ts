@@ -1,3 +1,5 @@
+import { effectiveScoreProvenance, presentFitForDisplay } from "../lib/authoritativeScore.js";
+import type { ApprovedRevisionOverlay } from "../services/scoring/scoreRevision.types.js";
 import { roleFromEvaluation } from "../services/gmail/jdRecovery/summary.js";
 import type { ApplicationEvaluation, FitBreakdown } from "../services/gmail/jdRecovery/evaluations.repository.js";
 import type { ApplicationEmail, GmailApplication, PendingAction } from "../services/gmail/gmailApplications.js";
@@ -77,32 +79,51 @@ const actionView = (action: PendingAction) => ({
   deadline: action.deadline,
 });
 
-const evaluationView = (evaluation: ApplicationEvaluation) => ({
-  status: evaluation.recovery.status,
-  fitTotal: evaluation.fit?.total,
-  recommendation: evaluation.fit?.recommendation,
-  recommendedResume: evaluation.fit?.recommendedResume,
-  matchLevel: evaluation.recovery.match?.level,
-  // Provenance only: stage label and short fixed-vocabulary signal codes. Never attempts, candidates, notes, or URLs.
-  foundVia: evaluation.recovery.foundVia,
-  matchSignals: evaluation.recovery.match?.signals ? [...evaluation.recovery.match.signals] : undefined,
-  jdTitle: roleFromEvaluation(evaluation) ?? undefined,
-  fitBreakdown: evaluation.fit?.breakdown ? fitBreakdownView(evaluation.fit.breakdown) : undefined,
-});
+const presentedFit = (evaluation?: ApplicationEvaluation, revision?: ApprovedRevisionOverlay | null) =>
+  evaluation?.fit ? presentFitForDisplay(evaluation.fit, { revision, evaluation }) : undefined;
 
-export const toListRow = (app: GmailApplication, evaluation?: ApplicationEvaluation) => ({
-  key: app.key,
-  company: app.company,
-  role: app.role ?? (evaluation ? roleFromEvaluation(evaluation) : null),
-  status: app.status,
-  furthestStage: app.furthestStage,
-  appliedAt: app.appliedAt,
-  lastUpdateAt: app.lastUpdateAt,
-  activelyInterviewing: app.activelyInterviewing,
-  fitTotal: evaluation?.fit?.total,
-});
+const evaluationView = (evaluation: ApplicationEvaluation, revision?: ApprovedRevisionOverlay | null) => {
+  const fit = presentedFit(evaluation, revision);
+  return {
+    status: evaluation.recovery.status,
+    fitTotal: fit?.total,
+    recommendation: fit?.recommendation,
+    recommendedResume: evaluation.fit?.recommendedResume,
+    matchLevel: evaluation.recovery.match?.level,
+    // Provenance only: stage label and short fixed-vocabulary signal codes. Never attempts, candidates, notes, or URLs.
+    foundVia: evaluation.recovery.foundVia,
+    matchSignals: evaluation.recovery.match?.signals ? [...evaluation.recovery.match.signals] : undefined,
+    jdTitle: roleFromEvaluation(evaluation) ?? undefined,
+    fitBreakdown: evaluation.fit?.breakdown ? fitBreakdownView(evaluation.fit.breakdown) : undefined,
+    ...(fit ? effectiveScoreProvenance(fit) : {}),
+  };
+};
 
-export const toDetailsView = (app: GmailApplication, evaluation?: ApplicationEvaluation) => ({
+export const toListRow = (
+  app: GmailApplication,
+  evaluation?: ApplicationEvaluation,
+  revision?: ApprovedRevisionOverlay | null,
+) => {
+  const fit = presentedFit(evaluation, revision);
+  return {
+    key: app.key,
+    company: app.company,
+    role: app.role ?? (evaluation ? roleFromEvaluation(evaluation) : null),
+    status: app.status,
+    furthestStage: app.furthestStage,
+    appliedAt: app.appliedAt,
+    lastUpdateAt: app.lastUpdateAt,
+    activelyInterviewing: app.activelyInterviewing,
+    fitTotal: fit?.total,
+    ...(fit ? effectiveScoreProvenance(fit) : {}),
+  };
+};
+
+export const toDetailsView = (
+  app: GmailApplication,
+  evaluation?: ApplicationEvaluation,
+  revision?: ApprovedRevisionOverlay | null,
+) => ({
   key: app.key,
   company: app.company,
   role: app.role ?? (evaluation ? roleFromEvaluation(evaluation) : null),
@@ -118,7 +139,7 @@ export const toDetailsView = (app: GmailApplication, evaluation?: ApplicationEva
   interviewRounds: app.interviewRounds.map(roundView),
   emails: app.emails.slice(-MAX_DETAIL_EMAILS).map(emailView),
   actionNeeded: app.actionNeeded ? actionView(app.actionNeeded) : undefined,
-  evaluation: evaluation ? evaluationView(evaluation) : undefined,
+  evaluation: evaluation ? evaluationView(evaluation, revision) : undefined,
 });
 
 export const toInsightsView = (run: InsightsRun | null) => {

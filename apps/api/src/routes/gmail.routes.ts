@@ -11,6 +11,7 @@ import {
   GmailReconnectRequiredError,
 } from "../services/gmail/gmailAuth.js";
 import { GmailRateLimitError } from "../services/gmail/gmailClient.js";
+import { presentFitForDisplay } from "../lib/authoritativeScore.js";
 import { DEFAULT_SYNC_DAYS, MAX_SYNC_DAYS, syncGmail } from "../services/gmail/gmailSync.js";
 import { getInterviewBrief } from "../services/gmail/interviewBrief.js";
 import { evaluationsRepository } from "../services/gmail/jdRecovery/evaluations.repository.js";
@@ -41,6 +42,15 @@ import { serperUsageRepository } from "../services/gmail/jdRecovery/serperClient
 import { monthStartDay } from "../services/llm/featureBudget.js";
 import { llmUsageRepository, localDay } from "../services/llm/llmUsage.js";
 import { buildRubricSummary, toEvaluationSummary, withEvaluations } from "../services/gmail/jdRecovery/summary.js";
+import {
+  approveScoreRevision,
+  listScoreRevisions,
+  loadApprovedOverlays,
+  proposeDeterministicRevision,
+  publicRevisionView,
+  rollbackScoreRevision,
+  ScoreRevisionError,
+} from "../services/scoring/scoreRevisions.service.js";
 
 export const gmailRouter = Router();
 
@@ -54,8 +64,9 @@ const ApplicationsQuerySchema = z.object({ days: DaysSchema });
 const applicationsWithEvaluations = async (days: number) => {
   const [applications, panel] = await Promise.all([getGmailApplications(days), getInterviewPanel()]);
   const evaluations = await loadEvaluations(applications);
+  const revisions = await loadApprovedOverlays(applications.map((a) => a.key));
   return {
-    applications: withEvaluations(applications, evaluations),
+    applications: withEvaluations(applications, evaluations, revisions),
     pendingRecovery: pendingApplications(applications, evaluations).length,
     upcomingInterviews: panel.upcoming,
     actionItems: panel.actions,
@@ -194,12 +205,13 @@ gmailRouter.get("/evaluations", async (req, res, next) => {
       llmUsageRepository.listSinceDay(sinceDay).catch(() => []),
       llmUsageRepository.listSinceDay(monthStartDay(new Date())).catch(() => []),
     ]);
+    const revisions = await loadApprovedOverlays(evaluations.map((e) => e.key));
     res.setHeader("Cache-Control", "no-store");
     res.json({
       days,
       run: getRecoveryRunState(),
       serper: { used: usage.queries, cap: usage.cap, configured: Boolean(env.serperApiKey) },
-      rubricSummary: buildRubricSummary(evaluations),
+      rubricSummary: buildRubricSummary(evaluations, revisions),
       metrics: buildRecoveryMetrics(evaluations, usage),
       costs: {
         ...buildCostSummary(llmRecords, {
@@ -215,12 +227,18 @@ gmailRouter.get("/evaluations", async (req, res, next) => {
           insights: env.insightsMonthlyBudgetUsd,
         }),
       },
-      evaluations: evaluations.map(({ jd, recovery, fit, diagnostic: _diagnostic, ...rest }) => ({
-        ...rest,
-        fit: fit && { ...fit, detail: undefined },
-        recovery: { ...recovery, candidates: recovery.candidates?.map(({ text: _text, rawText: _rawText, ...c }) => c) },
-        jd: jd && { title: jd.title, company: jd.company, datePosted: jd.datePosted, chars: jd.text.length },
-      })),
+      evaluations: evaluations.map((evaluation) => {
+        const { jd, recovery, fit, diagnostic: _diagnostic, ...rest } = evaluation;
+        const presented = fit
+          ? presentFitForDisplay(fit, { revision: revisions.get(evaluation.key), evaluation })
+          : undefined;
+        return {
+          ...rest,
+          fit: presented && { ...presented, detail: undefined },
+          recovery: { ...recovery, candidates: recovery.candidates?.map(({ text: _text, rawText: _rawText, ...c }) => c) },
+          jd: jd && { title: jd.title, company: jd.company, datePosted: jd.datePosted, chars: jd.text.length },
+        };
+      }),
     });
   } catch (error) {
     next(error);
@@ -259,6 +277,12 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
     res.status(409).json({ error: "incomplete_jd", message: error.message });
     return true;
   }
+  if (error instanceof ScoreRevisionError) {
+    const status =
+      error.code === "NOT_FOUND" ? 404 : error.code === "METHOD_NOT_EXECUTABLE" ? 403 : 409;
+    res.status(status).json({ error: error.code.toLowerCase(), message: error.message });
+    return true;
+  }
   return false;
 };
 
@@ -266,7 +290,84 @@ gmailRouter.get("/evaluations/:key/scoring", async (req, res, next) => {
   try {
     const evaluation = await evaluationsRepository.findByKey(req.params.key);
     if (!evaluation) throw new EvaluationNotFoundError(`No evaluation for ${req.params.key}`);
-    res.json(toScoringReport(evaluation));
+    const [overlays, history] = await Promise.all([
+      loadApprovedOverlays([evaluation.key]),
+      listScoreRevisions(evaluation.key),
+    ]);
+    const approved = history.find((r) => r.status === "approved");
+    res.json({
+      ...toScoringReport(evaluation, overlays.get(evaluation.key)),
+      scoreRevision: approved ? publicRevisionView(approved) : null,
+      scoreRevisions: history.map(publicRevisionView),
+    });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+const ProposeRevisionBodySchema = z.object({
+  allowRoleLaneChange: z.boolean().optional(),
+  reason: z.string().trim().max(2000).optional(),
+});
+const RevisionActionBodySchema = z.object({
+  note: z.string().trim().max(2000).optional(),
+});
+
+gmailRouter.get("/evaluations/:key/score-revisions", async (req, res, next) => {
+  try {
+    const evaluation = await evaluationsRepository.findByKey(req.params.key);
+    if (!evaluation) throw new EvaluationNotFoundError(`No evaluation for ${req.params.key}`);
+    const history = await listScoreRevisions(evaluation.key);
+    res.json({ revisions: history.map(publicRevisionView) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/score-revisions", async (req, res, next) => {
+  try {
+    const body = ProposeRevisionBodySchema.parse(req.body ?? {});
+    const revision = await proposeDeterministicRevision({
+      applicationKey: req.params.key,
+      allowRoleLaneChange: body.allowRoleLaneChange,
+      reason: body.reason,
+      via: "dashboard",
+    });
+    res.status(201).json({ revision: publicRevisionView(revision) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/score-revisions/:id/approve", async (req, res, next) => {
+  try {
+    const body = RevisionActionBodySchema.parse(req.body ?? {});
+    const revision = await approveScoreRevision({
+      applicationKey: req.params.key,
+      revisionId: req.params.id,
+      via: "dashboard",
+      note: body.note,
+    });
+    res.json({ revision: publicRevisionView(revision) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/score-revisions/:id/rollback", async (req, res, next) => {
+  try {
+    const body = RevisionActionBodySchema.parse(req.body ?? {});
+    const revision = await rollbackScoreRevision({
+      applicationKey: req.params.key,
+      revisionId: req.params.id,
+      via: "dashboard",
+      note: body.note,
+    });
+    res.json({ revision: publicRevisionView(revision) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;
     next(error);
@@ -302,7 +403,17 @@ gmailRouter.post("/evaluations/:key/interview-brief/regenerate", async (req, res
 /** Re-score the stored JD for auditing; the original fit score is not changed. */
 gmailRouter.post("/evaluations/:key/diagnose", async (req, res, next) => {
   try {
-    res.json(toScoringReport(await runScoringDiagnostic(req.params.key)));
+    const evaluation = await runScoringDiagnostic(req.params.key);
+    const [overlays, history] = await Promise.all([
+      loadApprovedOverlays([evaluation.key]),
+      listScoreRevisions(evaluation.key),
+    ]);
+    const approved = history.find((r) => r.status === "approved");
+    res.json({
+      ...toScoringReport(evaluation, overlays.get(evaluation.key)),
+      scoreRevision: approved ? publicRevisionView(approved) : null,
+      scoreRevisions: history.map(publicRevisionView),
+    });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;
     next(error);

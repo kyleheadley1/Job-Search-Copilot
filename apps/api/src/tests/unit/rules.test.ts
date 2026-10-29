@@ -159,6 +159,76 @@ Bachelor's degree required.
     expect(rules.financePenalty).toBe(false);
   });
 
+  it("does not treat Rippling HR/IT/Finance product boilerplate as a finance employer", () => {
+    const rules = evaluateRules(
+      makeJob({
+        company: "Rippling",
+        title: "Software Engineer, Backend, IT Product",
+        domainTags: ["saas"],
+        rawText: `
+Rippling builds a unified system for HR, IT, and Finance.
+Experience using a backend language (e.g., Python/Go).
+Benefits: 401(k) matching, financial wellness stipend, health insurance.
+        `.trim(),
+      }),
+      userProfile,
+    );
+    expect(rules.financePenalty).toBe(false);
+  });
+
+  it("does not treat preferred healthcare-as-a-plus as a healthcare product requirement", () => {
+    const rules = evaluateRules(
+      makeJob({
+        company: "Arbital Health",
+        title: "Full Stack Engineer",
+        domainTags: ["healthcare"],
+        requirements: ["Strong fundamentals in TypeScript, Python, and React."],
+        rawText: `
+Full Stack Engineer at Arbital Health.
+Strong fundamentals in TypeScript, Python, and React.
+Nice-to-haves:
+Prior healthcare experience is a plus.
+        `.trim(),
+      }),
+      userProfile,
+    );
+    expect(rules.domainMismatch).toBe(false);
+    expect(rules.healthcareProductEngineering).toBe(false);
+  });
+
+  it("does not hard-mismatch actuarial company boilerplate when the role does not require it", () => {
+    const rules = evaluateRules(
+      makeJob({
+        company: "Arbital Health",
+        title: "Full Stack Engineer",
+        requirements: ["Strong fundamentals in TypeScript, Python, and React."],
+        rawText: `
+Arbital Health is a rapidly growing healthcare technology and actuarial leader.
+Full Stack Engineer.
+Requirements:
+Strong fundamentals in TypeScript, Python, and React.
+Nice-to-haves:
+Prior healthcare experience is a plus.
+        `.trim(),
+      }),
+      userProfile,
+    );
+    expect(rules.domainMismatch).toBe(false);
+  });
+
+  it("still hard-mismatches a true actuarial credential role", () => {
+    const rules = evaluateRules(
+      makeJob({
+        company: "LifeCo",
+        title: "Actuarial Analyst",
+        requirements: ["ASA actuarial exam progress", "actuarial credential required"],
+        rawText: "Actuarial Analyst. Actuarial exam progress required.",
+      }),
+      userProfile,
+    );
+    expect(rules.domainMismatch).toBe(true);
+  });
+
   it("classifies research-heavy applied AI researcher roles", () => {
     const rules = evaluateRules(
       makeJob({
@@ -291,7 +361,8 @@ Bachelor's degree required.
           "You have experience developing backend systems using Java.",
           "Ship LLM-powered features for creators.",
         ],
-        rawText: "Applied AI and RAG for music discovery.",
+        rawText:
+          "You have experience developing backend systems using Java. Applied AI and RAG for music discovery.",
       }),
       userProfile,
     );

@@ -155,9 +155,21 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 const fitTooltip = (evaluation: EvaluationSummary): string => {
+  const revisionLine = evaluation.fingerprintStale
+    ? `Approved revision ${evaluation.staleRevisionTotal ?? "—"} is inactive because the stored evaluation changed. Showing ${evaluation.fitTotal}.`
+    : evaluation.scoreRevised
+      ? `Approved revision ${evaluation.fitTotal} (was ${evaluation.originalAuthoritativeTotal ?? evaluation.storedFitTotal ?? "original"})`
+      : evaluation.scoreConflict
+        ? `Display ${evaluation.fitTotal} (stored ${evaluation.storedFitTotal ?? "—"})`
+        : null;
   const b = evaluation.fitBreakdown;
-  if (!b) return "Scored before breakdowns were stored. Scores are final and are not re-run.";
+  if (!b) {
+    return [revisionLine, "Scored before breakdowns were stored. Scores are final and are not re-run."]
+      .filter(Boolean)
+      .join("\n");
+  }
   return [
+    revisionLine,
     `Capability ${b.capability ?? "?"} · survivability ${b.survivability ?? "?"}${b.gapDock ? ` · gap dock −${b.gapDock}` : ""}`,
     ...Object.entries(b.categories).map(([k, v]) => `${CATEGORY_LABEL[k] ?? k}: ${v}`),
     ...(b.hardGates ?? []).map((g) => `Hard gate: ${g}`),
@@ -605,6 +617,15 @@ function FitCell({
       </button>
       {evaluation.recommendedResume && (
         <span className="muted smallText">{evaluation.recommendedResume} resume</span>
+      )}
+      {evaluation.scoreRevised && <span className="muted smallText">Revised</span>}
+      {evaluation.fingerprintStale && (
+        <span
+          className="muted smallText"
+          title={`Approved revision ${evaluation.staleRevisionTotal ?? "—"} is not displayed because the stored evaluation changed.`}
+        >
+          Revision inactive
+        </span>
       )}
       {(evaluation.fitBreakdown?.hardGates?.length ?? 0) > 0 && (
         <span className="muted smallText" title={evaluation.fitBreakdown!.hardGates!.join("\n")}>
@@ -1294,7 +1315,8 @@ export function DashboardPage() {
       ),
     );
     setReviewKey(null);
-    void loadEvaluations().catch(() => null);
+    // Reload applications so a newly auto-added tracker row is linked (same as recovery poll).
+    void loadApplications().catch(() => null);
   };
 
   const counts = STATUS_ORDER.map((s) => ({
@@ -1587,7 +1609,10 @@ export function DashboardPage() {
                       {scoringKey === app.key && app.evaluation?.fitTotal !== undefined && (
                         <tr>
                           <td colSpan={7}>
-                            <ScoringDetailsPanel appKey={app.key} />
+                            <ScoringDetailsPanel
+                              appKey={app.key}
+                              onEffectiveScoreChange={() => void loadApplications().catch(() => null)}
+                            />
                           </td>
                         </tr>
                       )}

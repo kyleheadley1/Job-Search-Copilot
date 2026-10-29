@@ -98,9 +98,19 @@ const classifyLineStrength = (line: string, section: TagSourceStrength | null): 
     if (/\b(must have|required|mandatory)\b/i.test(trimmed)) return "REQUIRED";
     return "PREFERRED";
   }
-  if (/\b(must have|required|minimum|proficiency in|experience with)\b/i.test(trimmed)) return "REQUIRED";
-  if (/\b(nice[- ]to[- ]haves?|considered a plus|bonus|preferred|ideally|optional|familiarity with)\b/i.test(trimmed)) {
+  const preferredCue =
+    /\b(nice[- ]to[- ]haves?|considered a plus|bonus|preferred|ideally|optional|familiarity with|is a plus|\ba plus\b)\b/i.test(
+      trimmed,
+    );
+  if (preferredCue && !/\b(must have|required|mandatory)\b/i.test(trimmed)) {
     return "PREFERRED";
+  }
+  if (
+    /\b(must have|required|minimum|proficiency in|strong fundamentals|experience with|primary (?:backend )?language)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return "REQUIRED";
   }
   return section ?? "NARRATIVE";
 };

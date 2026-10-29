@@ -30,6 +30,7 @@ import { applyCompanyPresentation } from "./companyExtraction.js";
 import { attachGeoScope } from "../lib/geoEligibility.js";
 import { attachClearanceCitizenshipFields } from "../lib/clearanceCitizenship.js";
 import { reconcileSeniority } from "../lib/seniorityReconciliation.js";
+import { reconcileYearsExperience } from "../lib/yearsExperienceReconciliation.js";
 import { extractCompanyEmployeeCount } from "../lib/companyEmployeeCount.js";
 import { sanitizeExtractedTags } from "../lib/jdTagProvenance.js";
 import { attachReinforcedExperienceFloor } from "../lib/reinforcedExperienceFloor.js";
@@ -216,7 +217,8 @@ export const extractJobData = async (input: {
     extracted = finalizeExtracted(extracted, normalized, input.companyHint);
   }
 
-  const reconciled = reconcileSeniority(extracted);
+  const yearsReconciled = reconcileYearsExperience(extracted);
+  const reconciled = reconcileSeniority(yearsReconciled.job);
   extracted = {
     ...reconciled.job,
     company: ensureCompanyName(reconciled.job.company),

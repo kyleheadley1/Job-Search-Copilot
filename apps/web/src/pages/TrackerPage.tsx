@@ -12,8 +12,10 @@ import {
   appliedDateIso,
   appliedAtToDateInputValue,
   companyDisplayLabel,
+  displayedJobScore,
   hasJdSource,
   isAppliedPipelineStatus,
+  jobScoreTitle,
   salaryAskCompact,
   salaryAskLabel,
   trackerDisplayDate,
@@ -166,7 +168,7 @@ function compareJobs(a: JobRecord, b: JobRecord, key: TrackerSortKey, dir: SortD
       cmp = roleCell(a).localeCompare(roleCell(b), undefined, { sensitivity: "base" });
       break;
     case "score":
-      cmp = a.score.total - b.score.total;
+      cmp = displayedJobScore(a) - displayedJobScore(b);
       break;
     case "status":
       cmp = statusRank(a.status) - statusRank(b.status);
@@ -549,7 +551,13 @@ export const TrackerPage = () => {
           </span>
         );
       case "score":
-        return <ScoreBadge score={job.score.total} compact />;
+        return (
+          <span title={jobScoreTitle(job)} className="stack" style={{ gap: "0.1rem" }}>
+            <ScoreBadge score={displayedJobScore(job)} compact />
+            {job.effectiveScore?.scoreRevised && <span className="muted smallText">Revised</span>}
+            {job.effectiveScore?.fingerprintStale && <span className="muted smallText">Revision inactive</span>}
+          </span>
+        );
       case "recommendedAction":
         return (
           <span className="cell-lines-1 cell-lines-action" title={job.tracker.recommendedAction ?? ""}>

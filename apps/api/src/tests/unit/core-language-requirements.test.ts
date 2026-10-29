@@ -21,7 +21,8 @@ const spotifyJavaJd: ExtractedJobData = {
     "Ship LLM-powered features for creators.",
   ],
   requirements: [],
-  rawText: "We work on applied AI and RAG for music discovery.",
+  rawText:
+    "You have experience developing backend systems using Java. We work on applied AI and RAG for music discovery.",
 };
 
 describe("coreLanguageRequirements", () => {

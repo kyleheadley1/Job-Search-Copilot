@@ -146,6 +146,7 @@ vi.mock("../../agents/jobAgent/orchestrator.js", () => ({
 }));
 
 import { triageJob } from "../../agents/jobAgent/orchestrator.js";
+import { addMissingApplicationsQuietly } from "../../services/gmail/trackerAutoAdd.js";
 import { gmailClient } from "../../services/gmail/gmailClient.js";
 import { discoverBoards, listBoard, type BoardListing } from "../../services/gmail/jdRecovery/atsBoards.js";
 import { serperClient, serperUsageRepository } from "../../services/gmail/jdRecovery/serperClient.js";
@@ -678,6 +679,7 @@ describe("JD recovery runner", () => {
     ];
     await runRecovery(30, 5);
     const url = state.evaluations.get("pal::se")!.recovery.candidates![1]!.url;
+    vi.mocked(addMissingApplicationsQuietly).mockClear();
 
     const e = await confirmCandidate("pal::se", url);
 
@@ -687,6 +689,11 @@ describe("JD recovery runner", () => {
     const input = vi.mocked(triageJob).mock.calls.at(-1)![0];
     expect(Object.keys(input).sort()).toEqual(["companyHint", "fullPrep", "rawText"]);
     expect(JSON.stringify(input)).not.toMatch(/rejected/i);
+    expect(addMissingApplicationsQuietly).toHaveBeenCalledTimes(1);
+    vi.mocked(addMissingApplicationsQuietly).mockClear();
+    await expect(confirmCandidate("pal::se", url)).rejects.toBeInstanceOf(EvaluationNotFoundError);
+    expect(addMissingApplicationsQuietly).not.toHaveBeenCalled();
+    expect(state.evaluations.get("pal::se")!.fit?.total).toBe(78);
     await expect(confirmCandidate("pal::se", "https://nope.example/1")).rejects.toBeInstanceOf(EvaluationNotFoundError);
   });
 

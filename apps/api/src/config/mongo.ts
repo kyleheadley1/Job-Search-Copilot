@@ -30,7 +30,9 @@ const ensureIndexes = async (targetDb: Db): Promise<void> => {
     jobs.createIndex({ recommendation: 1, updatedAt: -1 }),
     jobs.createIndex({ "score.total": -1 }),
     jobs.createIndex({ "extracted.company": 1 }),
+    jobs.createIndex({ "tracker.gmailKey": 1 }, { sparse: true }),
     jobs.createIndex({ updatedAt: -1 }),
+    targetDb.collection("application_evaluations").createIndex({ trackerJobId: 1 }, { sparse: true }),
     topJobs.createIndex({ sourcePostedAt: -1 }),
     topJobs.createIndex({ "score.total": -1 }),
     topJobs.createIndex({ source: 1, externalId: 1 }, { unique: true }),
@@ -39,6 +41,8 @@ const ensureIndexes = async (targetDb: Db): Promise<void> => {
     targetDb.collection("job_prospects").createIndex({ companyKey: 1, status: 1, createdAt: -1 }),
     targetDb.collection("job_prospects").createIndex({ status: 1, createdAt: -1 }),
     targetDb.collection("job_prospects").createIndex({ cleanedTextHash: 1, companyKey: 1 }),
+    targetDb.collection("score_revisions").createIndex({ applicationKey: 1, createdAt: -1 }),
+    targetDb.collection("score_revisions").createIndex({ activeApplicationKey: 1 }, { unique: true, sparse: true }),
   ]);
   indexesEnsured = true;
 };

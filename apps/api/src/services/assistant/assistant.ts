@@ -8,6 +8,7 @@ import { evaluationsRepository } from "../gmail/jdRecovery/evaluations.repositor
 import { buildMonthSpend } from "../gmail/jdRecovery/recoveryMetrics.js";
 import type { ReplyTarget } from "../gmail/replyDraft.js";
 import { jobsRepository } from "../jobs/jobs.repository.js";
+import { overlayJobWithEffectiveScore, overlayJobsWithEffectiveScores } from "../scoring/trackerEffectiveScore.js";
 import { loadFeatureBudget, monthStartDay, type FeatureBudget } from "../llm/featureBudget.js";
 import { llmUsageRepository, withLlmContext } from "../llm/llmUsage.js";
 import { runWithTools, type ToolLoopResult } from "../llm/responsesClient.js";
@@ -63,8 +64,8 @@ export const defaultAssistantDeps: AssistantDeps = {
   tools: {
     loadApps,
     getEvaluation: (key) => evaluationsRepository.findByKey(key),
-    listTracker: () => jobsRepository.findAll(),
-    getJob: (id) => jobsRepository.getById(id),
+    listTracker: async () => overlayJobsWithEffectiveScores(await jobsRepository.findAll()),
+    getJob: async (id) => overlayJobWithEffectiveScore(await jobsRepository.getById(id)),
     listTopJobs: () => topJobsRepository.list(),
     listQueue: async () => prioritizePending(await alertListingsRepository.listPending(listingWindowStart())),
     getListing: (key) => alertListingsRepository.get(key),

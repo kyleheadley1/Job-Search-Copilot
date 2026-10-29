@@ -1,8 +1,8 @@
 import { computeJdTextHash } from "../../../lib/jdTextHash.js";
 import { normalizeSourceUrl } from "../../../lib/normalizeSourceUrl.js";
 import { normalizeCompany, type GmailApplication } from "../gmailApplications.js";
-import { jdLooksComplete } from "./emailEvidence.js";
 import { cleanProspectJd } from "./cleanProspectJd.js";
+import { jdTextLooksComplete } from "./jdCompleteness.js";
 import type {
   ApplicationEvaluation,
   JdCompleteness,
@@ -107,7 +107,7 @@ export const classifySubmittedCompleteness = (
   claimed: JdCompleteness,
 ): JdCompleteness => {
   if (claimed === "partial") return "partial";
-  return jdLooksComplete(cleanedText, MIN_PASTED_JD_CHARS) ? "full" : "partial";
+  return jdTextLooksComplete(cleanedText, MIN_PASTED_JD_CHARS) ? "full" : "partial";
 };
 
 const capEvidence = (items: string[]): string[] =>
@@ -211,6 +211,7 @@ export const submitJdCandidate = async (
     text: cleanedText,
     rawText: originalText.slice(0, MAX_CANDIDATE_TEXT),
     completeness,
+    claimedCompleteness: input.completeness,
     sourceType: input.sourceType,
     retrievedAt,
     matchEvidence,
@@ -285,6 +286,75 @@ export const submitJdCandidate = async (
     sourceType: input.sourceType,
     retrievedAt,
     candidateCount: written.recovery.candidates?.length ?? 1,
+    recoveryStatus: written.recovery.status,
+  };
+};
+
+export type RevalidateCandidateResult = {
+  applicationKey: string;
+  updated: boolean;
+  completeness: JdCompleteness;
+  scoringEligible: boolean;
+  reviewRequired: true;
+  recoveryStatus: ApplicationEvaluation["recovery"]["status"];
+};
+
+/**
+ * Re-run the server completeness check on an existing MCP candidate.
+ * Never scores, never overwrites JD text/URL/provenance, never upgrades a claimed-partial.
+ */
+export const revalidateSubmittedCandidateCompleteness = async (
+  key: string,
+  sourceUrl: string,
+  store: JdCandidateStore,
+): Promise<RevalidateCandidateResult> => {
+  const existing = await store.findByKey(key);
+  if (!existing) throw new EvaluationNotFoundError(`No evaluation for ${key}`);
+  if (existing.recovery.status === "scored") {
+    throw new AlreadyScoredError(`${key} is already scored; scores are final`);
+  }
+  const normalized = normalizeSourceUrl(sourceUrl);
+  if (!normalized) throw new InvalidJdCandidateError("sourceUrl must be an http(s) URL");
+  const candidates = existing.recovery.candidates ?? [];
+  const index = candidates.findIndex((c) => c.source === "mcp" && c.url === normalized);
+  if (index < 0) throw new EvaluationNotFoundError(`No MCP candidate ${normalized} for ${key}`);
+  const candidate = candidates[index]!;
+  if (candidate.claimedCompleteness === "partial") {
+    return {
+      applicationKey: key,
+      updated: false,
+      completeness: candidate.completeness ?? "partial",
+      scoringEligible: candidate.completeness === "full",
+      reviewRequired: true,
+      recoveryStatus: existing.recovery.status,
+    };
+  }
+  const completeness = classifySubmittedCompleteness(candidate.text, "full");
+  if (completeness === (candidate.completeness ?? "partial")) {
+    return {
+      applicationKey: key,
+      updated: false,
+      completeness,
+      scoringEligible: completeness === "full",
+      reviewRequired: true,
+      recoveryStatus: existing.recovery.status,
+    };
+  }
+  const nextCandidates = candidates.map((row, i) => (i === index ? { ...row, completeness } : row));
+  const written = await store.upsertIfUnscored({
+    ...existing,
+    recovery: { ...existing.recovery, status: "unverified", candidates: nextCandidates },
+    updatedAt: new Date().toISOString(),
+  });
+  if (written.recovery.status === "scored") {
+    throw new AlreadyScoredError(`${key} is already scored; scores are final`);
+  }
+  return {
+    applicationKey: key,
+    updated: true,
+    completeness,
+    scoringEligible: completeness === "full",
+    reviewRequired: true,
     recoveryStatus: written.recovery.status,
   };
 };

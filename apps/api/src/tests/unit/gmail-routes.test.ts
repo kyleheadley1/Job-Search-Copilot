@@ -103,12 +103,31 @@ vi.mock("../../services/gmail/jdRecovery/runRecovery.js", async (importOriginal)
 
 vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", () => ({
   evaluationsRepository: {
+    findByKey: vi.fn(async () => null),
     findByKeys: vi.fn(async () => new Map()),
     findByCompanyKeys: vi.fn(async () => []),
     rekey: vi.fn(),
     listSince: vi.fn(async () => []),
     upsert: vi.fn(),
     updateOutcome: vi.fn(),
+  },
+}));
+
+vi.mock("../../services/scoring/scoreRevisions.service.js", () => ({
+  loadApprovedOverlays: vi.fn(async () => new Map()),
+  listScoreRevisions: vi.fn(async () => []),
+  proposeDeterministicRevision: vi.fn(),
+  approveScoreRevision: vi.fn(),
+  rollbackScoreRevision: vi.fn(),
+  publicRevisionView: (revision: unknown) => revision,
+  ScoreRevisionError: class ScoreRevisionError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+    ) {
+      super(message);
+      this.name = "ScoreRevisionError";
+    }
   },
 }));
 

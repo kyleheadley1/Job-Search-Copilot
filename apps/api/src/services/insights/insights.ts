@@ -4,6 +4,7 @@ import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { getGmailApplications } from "../gmail/gmailApplications.js";
 import { evaluationsRepository } from "../gmail/jdRecovery/evaluations.repository.js";
+import { loadApprovedOverlays } from "../scoring/scoreRevisions.service.js";
 import { jobsRepository } from "../jobs/jobs.repository.js";
 import { loadFeatureBudget, type FeatureBudget } from "../llm/featureBudget.js";
 import { withLlmContext } from "../llm/llmUsage.js";
@@ -58,7 +59,8 @@ export class AdjustmentTransitionError extends Error {}
 export const loadInsightRows = async (now = Date.now()): Promise<InsightRow[]> => {
   const [jobs, apps] = await Promise.all([jobsRepository.findAll(), getGmailApplications(INSIGHTS_LOOKBACK_DAYS)]);
   const evaluations = await evaluationsRepository.findByKeys(apps.map((a) => a.key));
-  return buildInsightRows({ jobs, apps, evaluations }, now);
+  const revisions = await loadApprovedOverlays(apps.map((a) => a.key));
+  return buildInsightRows({ jobs, apps, evaluations, revisions }, now);
 };
 
 export const quietGoodFits = (rows: InsightRow[]): QuietGoodFit[] =>

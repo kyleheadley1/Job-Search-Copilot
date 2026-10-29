@@ -12,6 +12,7 @@ import type {
   InterviewBriefResponse,
   RecoveryStart,
   ScoringReport,
+  ScoreRevisionView,
 } from "../types/gmail";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
@@ -162,6 +163,21 @@ export const api = {
     request<ScoringReport>(`/gmail/evaluations/${encodeURIComponent(key)}/scoring`, { cache: "no-store" }),
   gmailRunDiagnostic: (key: string) =>
     request<ScoringReport>(`/gmail/evaluations/${encodeURIComponent(key)}/diagnose`, { method: "POST" }),
+  gmailProposeScoreRevision: (key: string, body?: { allowRoleLaneChange?: boolean; reason?: string }) =>
+    request<{ revision: ScoreRevisionView }>(`/gmail/evaluations/${encodeURIComponent(key)}/score-revisions`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  gmailApproveScoreRevision: (key: string, revisionId: string, note?: string) =>
+    request<{ revision: ScoreRevisionView }>(
+      `/gmail/evaluations/${encodeURIComponent(key)}/score-revisions/${encodeURIComponent(revisionId)}/approve`,
+      { method: "POST", body: JSON.stringify({ note }) },
+    ),
+  gmailRollbackScoreRevision: (key: string, revisionId: string, note?: string) =>
+    request<{ revision: ScoreRevisionView }>(
+      `/gmail/evaluations/${encodeURIComponent(key)}/score-revisions/${encodeURIComponent(revisionId)}/rollback`,
+      { method: "POST", body: JSON.stringify({ note }) },
+    ),
   gmailPasteJd: (key: string, text: string, url?: string) =>
     request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/jd`, {
       method: "POST",

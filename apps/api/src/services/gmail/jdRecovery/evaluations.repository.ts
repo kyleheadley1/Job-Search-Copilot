@@ -45,6 +45,8 @@ export type RecoveryCandidate = {
   /** Original retrieved text for MCP submissions; never sent to the scorer until confirm. */
   rawText?: string;
   completeness?: JdCompleteness;
+  /** Claude's requested completeness; the stored `completeness` is the server's decision. */
+  claimedCompleteness?: JdCompleteness;
   sourceType?: JdSourceType;
   retrievedAt?: string;
   matchEvidence?: string[];
@@ -172,6 +174,21 @@ export const evaluationsRepository = {
     const col = await this.collection();
     const docs = await col.find({ _id: { $in: keys } }).toArray();
     return new Map(docs.map((d) => [d._id, strip(d)]));
+  },
+
+  /** Map tracker job id → scored (or latest) Gmail evaluation linked to that row. */
+  async findByTrackerJobIds(ids: string[]): Promise<Map<string, ApplicationEvaluation>> {
+    if (ids.length === 0) return new Map();
+    const col = await this.collection();
+    const docs = await col.find({ trackerJobId: { $in: ids } }).toArray();
+    const map = new Map<string, ApplicationEvaluation>();
+    for (const doc of docs) {
+      const evaluation = strip(doc);
+      if (!evaluation.trackerJobId) continue;
+      const existing = map.get(evaluation.trackerJobId);
+      if (!existing || evaluation.recovery.status === "scored") map.set(evaluation.trackerJobId, evaluation);
+    }
+    return map;
   },
 
   async listSince(sinceIso: string): Promise<ApplicationEvaluation[]> {

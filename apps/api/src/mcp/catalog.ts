@@ -14,8 +14,26 @@ import {
   type SubmitJdCandidateResult,
 } from "../services/gmail/jdRecovery/jdCandidates.service.js";
 import type { SaveJobProspectInput, SaveJobProspectResult } from "../services/gmail/jdRecovery/jobProspects.service.js";
+import type { ApprovedRevisionOverlay } from "../services/scoring/scoreRevision.types.js";
+import {
+  isReviewRequiredCode,
+  ProposeScoringCorrectionInput,
+  type ProposeScoringCorrectionInput as ProposeScoringCorrectionArgs,
+} from "../services/scoring/claudeScoringProposal.js";
+import { ScoreRevisionError } from "../services/scoring/scoreRevisions.service.js";
 import type { InsightsRun } from "../services/insights/insights.repository.js";
+import type { UserProfile } from "../types/userProfile.js";
+import type { ResumeContextSet } from "../types/resumeContext.js";
+import { LEGACY_RESUME_TYPES, RESUME_TYPES } from "../types/resume.js";
 import { toDetailsView, toInsightsView, toListRow } from "./views.js";
+import {
+  AUDIT_PROTOCOL,
+  AUDIT_ROLE_CATEGORIES,
+  SCORING_MODEL_FOR_AUDIT,
+  buildScoringAuditContext,
+  isScoredEvaluation,
+  listScoredApplicationsForAudit,
+} from "./scoringAudit.js";
 
 /** Same lookback ceiling as the Gmail applications query. Details always use this window. */
 export const MCP_MAX_DAYS = 120;
@@ -43,9 +61,13 @@ export class McpToolError extends Error {
 export type McpDeps = {
   getApplications: (days: number) => Promise<GmailApplication[]>;
   getEvaluationsByKeys: (keys: string[]) => Promise<Map<string, ApplicationEvaluation>>;
+  getActiveScoreRevisions: (keys: string[]) => Promise<Map<string, ApprovedRevisionOverlay>>;
   getLatestInsightsRun: () => Promise<InsightsRun | null>;
+  getUserProfile: () => UserProfile;
+  getResumeContexts: () => Promise<ResumeContextSet>;
   saveJobProspect: (input: SaveJobProspectInput) => Promise<SaveJobProspectResult>;
   submitJdCandidate: (input: SubmitJdCandidateInput) => Promise<SubmitJdCandidateResult>;
+  proposeScoringCorrection: (input: ProposeScoringCorrectionArgs) => Promise<unknown>;
 };
 
 export const ListApplicationsInput = z
@@ -72,6 +94,30 @@ const optionalText = (max: number) =>
     .max(max)
     .optional()
     .transform((value) => (value ? value : undefined));
+
+export const ListScoredApplicationsForAuditInput = z
+  .object({
+    query: z.string().trim().min(1).max(200).optional(),
+    roleCategory: z.enum(AUDIT_ROLE_CATEGORIES).optional(),
+    minScore: z.number().min(0).max(100).optional(),
+    maxScore: z.number().min(0).max(100).optional(),
+    recommendation: z.enum(["strong_apply", "apply", "stretch", "weak"]).optional(),
+    resumeVariant: z.enum([...RESUME_TYPES, ...LEGACY_RESUME_TYPES]).optional(),
+    outcome: z.enum(APPLICATION_STATUSES).optional(),
+    promptVersion: z.string().trim().min(1).max(80).optional(),
+    appliedAfter: z.string().trim().min(10).max(40).optional(),
+    appliedBefore: z.string().trim().min(10).max(40).optional(),
+    days: z.number().int().min(1).max(MCP_MAX_DAYS).default(MCP_MAX_DAYS),
+    limit: z.number().int().min(1).max(MCP_MAX_LIMIT).default(MCP_DEFAULT_LIMIT),
+    offset: z.number().int().min(0).max(10_000).default(0),
+  })
+  .strict();
+
+export const GetScoringAuditContextInput = z
+  .object({
+    key: z.string().trim().min(1).max(500),
+  })
+  .strict();
 
 export const ListMissingJobDescriptionsInput = z
   .object({
@@ -102,6 +148,8 @@ export const SubmitJdCandidateInputSchema = z
     completeness: z.enum(["full", "partial"]),
   })
   .strict();
+
+export { ProposeScoringCorrectionInput };
 
 export const SaveJobProspectInputSchema = z
   .object({
@@ -141,11 +189,15 @@ const listApplications = async (args: z.infer<typeof ListApplicationsInput>, dep
   const apps = await deps.getApplications(args.days);
   const matched = apps.filter((app) => (!args.status || app.status === args.status) && matchesQuery(app, args.query));
   const page = matched.slice(0, args.limit);
-  const evaluations = await deps.getEvaluationsByKeys(page.map((app) => app.key));
+  const keys = page.map((app) => app.key);
+  const [evaluations, revisions] = await Promise.all([
+    deps.getEvaluationsByKeys(keys),
+    deps.getActiveScoreRevisions(keys),
+  ]);
   return {
     days: args.days,
     totalMatched: matched.length,
-    applications: page.map((app) => toListRow(app, evaluations.get(app.key))),
+    applications: page.map((app) => toListRow(app, evaluations.get(app.key), revisions.get(app.key))),
   };
 };
 
@@ -155,8 +207,11 @@ const getApplicationDetails = async (args: z.infer<typeof GetApplicationDetailsI
   if (!app) {
     throw new McpToolError("NOT_FOUND", `No application with key ${args.key}`);
   }
-  const evaluations = await deps.getEvaluationsByKeys([app.key]);
-  return toDetailsView(app, evaluations.get(app.key));
+  const [evaluations, revisions] = await Promise.all([
+    deps.getEvaluationsByKeys([app.key]),
+    deps.getActiveScoreRevisions([app.key]),
+  ]);
+  return toDetailsView(app, evaluations.get(app.key), revisions.get(app.key));
 };
 
 const getApplicationInsights = async (_args: z.infer<typeof GetApplicationInsightsInput>, deps: McpDeps) =>
@@ -173,6 +228,65 @@ const listMissing = async (args: z.infer<typeof ListMissingJobDescriptionsInput>
   return { days: args.days, offset: args.offset, ...page };
 };
 
+const listScoredForAudit = async (args: z.infer<typeof ListScoredApplicationsForAuditInput>, deps: McpDeps) => {
+  const apps = await deps.getApplications(args.days);
+  const keys = apps.map((app) => app.key);
+  const [evaluations, revisions] = await Promise.all([
+    deps.getEvaluationsByKeys(keys),
+    deps.getActiveScoreRevisions(keys),
+  ]);
+  const page = listScoredApplicationsForAudit(
+    apps,
+    evaluations,
+    {
+      query: args.query,
+      roleCategory: args.roleCategory,
+      minScore: args.minScore,
+      maxScore: args.maxScore,
+      recommendation: args.recommendation,
+      resumeVariant: args.resumeVariant,
+      outcome: args.outcome,
+      promptVersion: args.promptVersion,
+      appliedAfter: args.appliedAfter,
+      appliedBefore: args.appliedBefore,
+      offset: args.offset,
+      limit: args.limit,
+    },
+    revisions,
+  );
+  return {
+    readOnly: true as const,
+    days: args.days,
+    offset: args.offset,
+    scoringModel: SCORING_MODEL_FOR_AUDIT,
+    auditProtocol: AUDIT_PROTOCOL,
+    ...page,
+  };
+};
+
+const getScoringAuditContext = async (args: z.infer<typeof GetScoringAuditContextInput>, deps: McpDeps) => {
+  const apps = await deps.getApplications(MCP_MAX_DAYS);
+  const app = apps.find((row) => row.key === args.key);
+  if (!app) {
+    throw new McpToolError("NOT_FOUND", `No application with key ${args.key}`);
+  }
+  const [evaluations, revisions] = await Promise.all([
+    deps.getEvaluationsByKeys([app.key]),
+    deps.getActiveScoreRevisions([app.key]),
+  ]);
+  const evaluation = evaluations.get(app.key);
+  if (!isScoredEvaluation(evaluation)) {
+    throw new McpToolError("NOT_SCORED", `${args.key} is not a scored application`);
+  }
+  return buildScoringAuditContext({
+    app,
+    evaluation,
+    profile: deps.getUserProfile(),
+    resumeContexts: await deps.getResumeContexts(),
+    revision: revisions.get(app.key),
+  });
+};
+
 const mapSubmitError = (error: unknown): never => {
   if (error instanceof EvaluationNotFoundError) throw new McpToolError("NOT_FOUND", error.message);
   if (error instanceof CompanyMismatchError) throw new McpToolError("COMPANY_MISMATCH", error.message);
@@ -180,6 +294,25 @@ const mapSubmitError = (error: unknown): never => {
   if (error instanceof InvalidJdCandidateError) throw new McpToolError("INVALID_CANDIDATE", error.message);
   if (error instanceof CandidatesFullError) throw new McpToolError("CANDIDATES_FULL", error.message);
   throw error;
+};
+
+const proposeScoringCorrection = async (args: ProposeScoringCorrectionArgs, deps: McpDeps) => {
+  try {
+    return await deps.proposeScoringCorrection(args);
+  } catch (error) {
+    if (error instanceof ScoreRevisionError) {
+      if (isReviewRequiredCode(error.code)) {
+        return {
+          status: "review_required" as const,
+          approved: false as const,
+          code: error.code,
+          message: error.message,
+        };
+      }
+      throw new McpToolError(error.code, error.message);
+    }
+    throw error;
+  }
 };
 
 const submitCandidate = async (args: z.infer<typeof SubmitJdCandidateInputSchema>, deps: McpDeps) => {
@@ -242,6 +375,34 @@ export const MCP_TOOLS = [
       "Submit a web-retrieved job posting as a review candidate for an existing Gmail application key. Requires the original retrieved text, source URL, source type, match evidence, and completeness (full or partial). Stores original plus cleaned text on the existing evaluation. Does not score, does not pick a winner among competing candidates, and does not overwrite a scored evaluation. Partial JDs are stored for review but are ineligible to score. The user must confirm the match in the dashboard before scoring. Self-reported confidence is not an input and is never treated as proof of a match.",
     inputSchema: SubmitJdCandidateInputSchema,
     execute: submitCandidate,
+  },
+  {
+    name: "list_scored_applications_for_audit" as const,
+    description:
+      "Read-only scored-application sample list for a scoring audit. Returns paginated metadata (effective displayed score, recommendation, resume variant, role category, outcome, evidence-completeness flags) plus the scoring model and audit protocol. Uses the approved historical revision when one exists. Does not rescore, does not approve revisions, does not call OpenAI, and does not return JD text, email bodies, senders, or credentials.",
+    inputSchema: ListScoredApplicationsForAuditInput,
+    execute: listScoredForAudit,
+  },
+  {
+    name: "get_scoring_audit_context" as const,
+    description:
+      "Read-only scoring audit packet for one scored application: stored JD, persisted fit breakdown and scoring snapshot when present, current candidate profile, the recommended resume variant, and scoring.evaluationFingerprint (the canonical stored-evaluation hash required by propose_scoring_correction — not jobDescription.textHash). The displayed total is the approved historical revision when one exists, otherwise the stored authoritative overlay. Uses stored scoring outputs only — does not rescore, does not approve or create revisions, does not call OpenAI, and does not write evaluations. Missing historical internals are listed in evidenceGaps instead of being reconstructed. For supported interpretation errors, use propose_scoring_correction with JD quotes; do not treat a verbal corrected score as a write.",
+    inputSchema: GetScoringAuditContextInput,
+    execute: getScoringAuditContext,
+  },
+  {
+    name: "propose_scoring_correction" as const,
+    description:
+      "Submit an evidence-backed correction to an allowlisted scoring input (years-of-experience minimum, inferred seniority, mixed-stack vs exclusive core language, or role lane). Requires the exact application key, current evaluation fingerprint, original and proposed values, and JD quotes that appear in the stored posting. The scoring engine independently recomputes the score; any numeric score you supply is ignored and rejected. Creates a proposed revision only — does not approve, roll back, change weights, modify the stored evaluation, update the tracker, call the paid scorer, or regenerate insights. Role-lane changes require allowRoleLaneChange after explicit review. The user must approve in the dashboard.",
+    inputSchema: ProposeScoringCorrectionInput,
+    annotations: {
+      title: "Propose scoring correction",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    execute: proposeScoringCorrection,
   },
 ];
 

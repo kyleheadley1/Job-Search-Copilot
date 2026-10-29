@@ -1,6 +1,7 @@
 import type { ExtractedJobData } from "../types/job.js";
 import type { RuleEvaluation } from "../types/scoring.js";
 import { jdDutiesBlob, jdSignalsSeniorDepthRequirements } from "./jdGroundedRiskNotes.js";
+import { extractGroundedYearsClauses } from "./yearsExperienceReconciliation.js";
 import { normalizeText } from "./text.js";
 import { logger } from "./logger.js";
 
@@ -309,19 +310,19 @@ const SENIOR_EXPERIENCE_ASK_RE =
 export const jdAsksForSeniorExperience = (job: ExtractedJobData): boolean =>
   SENIOR_EXPERIENCE_ASK_RE.test(jdDutiesBlob(job));
 
-/** "N+ years …experience" in Required/Responsibilities; a range counts by its lower bound. */
-const REQUIRED_YEARS_RE =
-  /(?:\b(\d{1,2})\s*[–-]\s*)?\b(\d{1,2})\s*\+?\s*(?:years?|yrs)\b[^.\n]{0,40}\b(?:experience|engineering|software|industry|professional|building|developing)\b/gi;
-
-export const requiredYearsRangeInDuties = (job: ExtractedJobData): { min: number; max?: number } | null => {
-  let best: { min: number; max?: number } | null = null;
-  for (const m of jdDutiesBlob(job).matchAll(REQUIRED_YEARS_RE)) {
-    const range = m[1]
-      ? { min: Number.parseInt(m[1], 10), max: Number.parseInt(m[2]!, 10) }
-      : { min: Number.parseInt(m[2]!, 10) };
-    if (!best || range.min < best.min) best = range;
+/** Explicit JD year floors (including fractional 1.5+). Conflicting floors return null. */
+export const requiredYearsRangeInDuties = (
+  job: ExtractedJobData,
+): { min: number; max?: number } | null => {
+  const clauses = extractGroundedYearsClauses(job);
+  if (clauses.length === 0) return null;
+  const unique: number[] = [];
+  for (const m of clauses.map((c) => c.min)) {
+    if (!unique.some((n) => Math.abs(n - m) < 0.05)) unique.push(m);
   }
-  return best;
+  if (unique.length !== 1) return null;
+  const clause = clauses.find((c) => Math.abs(c.min - unique[0]!) < 0.05)!;
+  return { min: clause.min, max: clause.max };
 };
 
 export const requiredYearsInDuties = (job: ExtractedJobData): number | null =>

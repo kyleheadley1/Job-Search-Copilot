@@ -18,7 +18,12 @@ import {
   isMatureStructuredEmployer,
   jdPythonFlexibleWithJsOrTs,
 } from '../../lib/coreLanguageRequirements.js';
-import { evaluateDisjunctiveLanguageRequirement, filterGapsAfterDisjunctiveMatch } from '../../lib/disjunctiveLanguageRequirement.js';
+import {
+  evaluateDisjunctiveLanguageRequirement,
+  filterGapsAfterDisjunctiveMatch,
+  languageIsIllustrativeExampleOnly,
+} from '../../lib/disjunctiveLanguageRequirement.js';
+import { classifyJdLines, termIsPreferredOrNarrativeOnly } from '../../lib/jdTagProvenance.js';
 import { goMentionedAsPreferred, textMentionsGoLanguage } from '../../lib/goLanguage.js';
 import { isFdeBuilderSoftwarePrimaryShape } from '../../lib/fdeBuilderRole.js';
 import { evaluateTitleResponsibilitySeniority } from '../../lib/titleResponsibilitySeniority.js';
@@ -30,6 +35,8 @@ import { detectProductionInfraOwnershipGap } from '../../lib/namedCapabilityRisk
 import { classifyRoleLane, detectBackendProductApiShape } from '../../lib/roleFunctionClassifier.js';
 import { isStartupSmallTeamScale } from '../../lib/employerScale.js';
 import { assessRoleSeniority, resolveStructuredSeniorityLevel, seniorityNeedsManualReview } from '../../lib/seniorityGate.js';
+import { reconcileSeniority } from '../../lib/seniorityReconciliation.js';
+import { reconcileYearsExperience } from '../../lib/yearsExperienceReconciliation.js';
 import { COMPOSITE_SCORING } from '../../config/capabilitySurvivabilityPolicy.js';
 import { computeExperienceGap, levelFitCeilingForSeniorityDock } from '../../lib/experienceGap.js';
 import {
@@ -38,6 +45,7 @@ import {
   citeProductionRigorSpan,
   citeSeniorDepthSpan,
   firstJdMatch,
+  jdDutiesBlob,
 } from '../../lib/jdGroundedRiskNotes.js';
 import {
   jdHasAppliedAiSystemsOverlap,
@@ -129,6 +137,7 @@ export const evaluateRules = (
     activeResumeType?: ResumeType;
   },
 ): RuleEvaluation => {
+  job = reconcileSeniority(reconcileYearsExperience(job).job).job;
   const notes: string[] = [];
   const penaltyVector: Record<string, number> = {};
 
@@ -349,21 +358,45 @@ export const evaluateRules = (
     stackAnalysis.coreLanguageGap,
     disjunctiveLanguage,
   );
-  coreLanguageGap = filterLanguagesToJdPresence(coreLanguageGap, job);
+  coreLanguageGap = filterLanguagesToJdPresence(coreLanguageGap, job).filter(
+    (label) => !languageIsIllustrativeExampleOnly(job, label),
+  );
   if (coreLanguageGap.length === 0) stackMismatch = false;
   const adjacentFrameworkGap = stackAnalysis.adjacentFrameworkGap;
 
-  const hardDomainMismatch = includesAny(combinedText, [
-    'medical billing',
-    'quantitative research',
-    'actuarial',
-    'embedded firmware',
-  ]);
+  const hardDomainDutyText = normalizeText(
+    [job.title, jdDutiesBlob(job), ...(job.requiredSkills ?? [])].filter(Boolean).join(' '),
+  );
+  const actuarialCredentialRole =
+    /\b(actuary|actuarial (?:analyst|associate|exam|credential|fellowship|experience required))\b/i.test(
+      hardDomainDutyText,
+    );
+  const hardDomainMismatch =
+    includesAny(hardDomainDutyText, ['medical billing', 'quantitative research', 'embedded firmware']) ||
+    actuarialCredentialRole;
+  const HEALTHCARE_CUE =
+    /\b(healthcare|health\s+care|behavioral\s+health|clinical|patient|hospital|therapy|ehr|hipaa)\b/i;
+  const healthcareIdentity = /\b(healthcare|clinical|eclinical|hipaa)\b/i.test(
+    `${job.company} ${job.title}`,
+  );
+  const healthcareRequiredProse = [
+    ...(job.requirements ?? []),
+    ...(job.responsibilities ?? []),
+    ...classifyJdLines(job.rawText ?? "")
+      .filter(({ strength, line }) => strength === "REQUIRED" && !/\b(a plus|preferred|nice[- ]to[- ]have)\b/i.test(line))
+      .map(({ line }) => line),
+  ].some((line) => HEALTHCARE_CUE.test(line) && !/\b(a plus|preferred|nice[- ]to[- ]have)\b/i.test(line));
+  const healthcarePreferredOnly =
+    !healthcareIdentity &&
+    !healthcareRequiredProse &&
+    (termIsPreferredOrNarrativeOnly("healthcare", job) ||
+      classifyJdLines(job.rawText ?? "").some(
+        ({ line, strength }) => HEALTHCARE_CUE.test(line) && (strength === "PREFERRED" || /\ba plus\b/i.test(line)),
+      ));
   const healthcareProductEngineering =
     !hardDomainMismatch &&
-    /\b(healthcare|health\s+care|behavioral\s+health|clinical|patient|hospital|therapy|ehr|hipaa)\b/i.test(
-      combinedText,
-    ) &&
+    !healthcarePreferredOnly &&
+    HEALTHCARE_CUE.test(combinedText) &&
     /\b(product\s+engineer|full[-\s]?stack|software\s+engineer|typescript|javascript|react|api|revenue|growth|internal\s+tools|crm)\b/i.test(
       combinedText,
     );
@@ -382,6 +415,7 @@ export const evaluateRules = (
       combinedText,
     );
   const healthcareOpsComplexity =
+    !healthcarePreferredOnly &&
     /\b(healthcare|clinical|patient|care operations|compliance|hipaa)\b/i.test(combinedText);
   const foundingEngineerStretch = foundingSignals;
   const fintechPaymentsRole =

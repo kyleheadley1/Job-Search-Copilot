@@ -318,7 +318,20 @@ describe("save_job_prospect MCP tool", () => {
   const deps = (): McpDeps => ({
     getApplications: vi.fn(async () => []),
     getEvaluationsByKeys: vi.fn(async () => new Map()),
+    getActiveScoreRevisions: vi.fn(async () => new Map()),
     getLatestInsightsRun: vi.fn(async () => null),
+    getUserProfile: vi.fn(() => {
+      throw new Error("getUserProfile should not run in prospect tests");
+    }),
+    getResumeContexts: vi.fn(async () => {
+      throw new Error("getResumeContexts should not run in prospect tests");
+    }),
+    submitJdCandidate: vi.fn(async () => {
+      throw new Error("submitJdCandidate should not run in prospect tests");
+    }),
+    proposeScoringCorrection: vi.fn(async () => {
+      throw new Error("proposeScoringCorrection should not run in prospect tests");
+    }),
     saveJobProspect: vi.fn(async (input) => ({
       id: "saved-1",
       company: input.company,

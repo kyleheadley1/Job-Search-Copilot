@@ -19,6 +19,7 @@ import { capturesRepository } from "../captures/captures.repository.js";
 import { resumeContextService } from "../resume/resumeContext.js";
 import { toActiveResumeType } from "../../types/resume.js";
 import { companyHintFromExtracted, preserveCompanyOnRetriage } from "../../lib/preserveCompanyOnRetriage.js";
+import { overlayJobWithEffectiveScore, overlayJobsWithEffectiveScores } from "../scoring/trackerEffectiveScore.js";
 
 export class JobNotFoundError extends Error {
   readonly code = "JOB_NOT_FOUND" as const;
@@ -89,7 +90,11 @@ export class JobsService {
 
   /** Re-run extraction, rules, and scoring for an existing draft or tracked role. */
   async runRetriage(id: string): Promise<{ job: JobRecord; tracked: boolean }> {
-    const { job: prev, tracked } = await this.getByIdIncludingDraft(id);
+    // Read the raw stored record: the effective-score overlay is presentation-only and
+    // must never be spread into `merged` and persisted back onto the jobs document.
+    const storedTracked = await jobsRepository.getById(id);
+    const tracked = Boolean(storedTracked);
+    const prev = storedTracked ?? (await this.findDraft(id));
     if (!prev) throw new JobNotFoundError();
 
     const rawText = prev.extracted.rawText?.trim();
@@ -172,7 +177,7 @@ export class JobsService {
 
     if (tracked) {
       const saved = await jobsRepository.upsertJob(merged);
-      return { job: saved, tracked: true };
+      return { job: (await overlayJobWithEffectiveScore(saved)) ?? saved, tracked: true };
     }
     await this.saveDraft(merged);
     return { job: merged, tracked: false };
@@ -180,13 +185,13 @@ export class JobsService {
 
   async getByIdIncludingDraft(id: string): Promise<{ job: JobRecord | null; tracked: boolean }> {
     const tracked = await jobsRepository.getById(id);
-    if (tracked) return { job: tracked, tracked: true };
+    if (tracked) return { job: await overlayJobWithEffectiveScore(tracked), tracked: true };
     const draft = await this.findDraft(id);
     return { job: draft, tracked: false };
   }
 
   async getById(id: string): Promise<JobRecord | null> {
-    return jobsRepository.getById(id);
+    return overlayJobWithEffectiveScore(await jobsRepository.getById(id));
   }
 
   async list(
@@ -219,7 +224,12 @@ export class JobsService {
         .sort(compareShortlistJobs);
     }
 
-    return { ...result, items, total: items.length, shortlistTotal };
+    return {
+      ...result,
+      items: await overlayJobsWithEffectiveScores(items),
+      total: items.length,
+      shortlistTotal,
+    };
   }
 
   /** Recompute scores + sync shortlist flags for every tracked job. */
@@ -270,7 +280,7 @@ export class JobsService {
         result.debugAssetGeneration,
       );
       if (!updated) throw new JobNotFoundError();
-      return updated;
+      return (await overlayJobWithEffectiveScore(updated)) ?? updated;
     }
     const merged: JobRecord = {
       ...job,
@@ -312,25 +322,25 @@ export class JobsService {
   async updateStatus(id: string, status: JobStatus, note?: string): Promise<JobRecord> {
     const updated = await jobsRepository.updateStatus(id, status, note);
     if (!updated) throw new JobNotFoundError();
-    return updated;
+    return (await overlayJobWithEffectiveScore(updated)) ?? updated;
   }
 
   async updateNotes(id: string, notes: string): Promise<JobRecord> {
     const updated = await jobsRepository.updateNotes(id, notes);
     if (!updated) throw new JobNotFoundError();
-    return updated;
+    return (await overlayJobWithEffectiveScore(updated)) ?? updated;
   }
 
   async updateAppliedAt(id: string, appliedAt: string): Promise<JobRecord> {
     const updated = await jobsRepository.updateAppliedAt(id, appliedAt);
     if (!updated) throw new JobNotFoundError();
-    return updated;
+    return (await overlayJobWithEffectiveScore(updated)) ?? updated;
   }
 
   async setReachedHuman(id: string, reachedHuman: boolean | null): Promise<JobRecord> {
     const updated = await jobsRepository.setReachedHuman(id, reachedHuman);
     if (!updated) throw new JobNotFoundError();
-    return updated;
+    return (await overlayJobWithEffectiveScore(updated)) ?? updated;
   }
 
   async removeFromTracker(id: string): Promise<void> {
@@ -383,7 +393,7 @@ export class JobsService {
     const saved = await jobsRepository.upsertJob(toPersist);
     this.draftJobs.delete(id);
     this.captureIdByDraftId.delete(id);
-    return saved;
+    return (await overlayJobWithEffectiveScore(saved)) ?? saved;
   }
 }
 

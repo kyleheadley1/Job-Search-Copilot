@@ -104,6 +104,14 @@ export type EvaluationSummary = {
   };
   fitTotal?: number;
   recommendation?: string;
+  storedFitTotal?: number;
+  scoreConflict?: boolean;
+  authoritativeSource?: string;
+  revisionId?: string;
+  scoreRevised?: boolean;
+  originalAuthoritativeTotal?: number;
+  fingerprintStale?: boolean;
+  staleRevisionTotal?: number;
   recommendedResume?: ResumeType;
   matchLevel?: MatchLevel;
   url?: string;
@@ -204,6 +212,46 @@ export type ScoringDetail = {
   extracted: Omit<ExtractedJobData, "rawText">;
 };
 
+export type ScoreRevisionSnapshot = {
+  total: number;
+  recommendation: string;
+  capability?: number;
+  derivation?: string;
+  hardGates: string[];
+  yearsExperience?: { raw?: string; min?: number; max?: number };
+  seniority?: string;
+  roleLane?: string;
+  stackMismatch?: boolean;
+  coreLanguageGap?: string[];
+  seniorityOverreach?: boolean;
+};
+
+export type ScoreRevisionView = {
+  revisionId: string;
+  applicationKey: string;
+  status: "proposed" | "approved" | "rolled_back";
+  method: "deterministic_replay" | "human_correction" | "claude_audit_proposal";
+  scoringVersion: string;
+  pipelineVersionLabel: string;
+  inputsChanged: string[];
+  inputChanges: Array<{ id: string; from: unknown; to: unknown }>;
+  evidence: string[];
+  explanation: string;
+  recommendationTierChanged: boolean;
+  original: ScoreRevisionSnapshot;
+  corrected: ScoreRevisionSnapshot;
+  createdAt: string;
+  createdBy?: { actor: string; via: string; at: string; note?: string };
+  approvedAt?: string;
+  approvedBy?: { actor: string; via: string; at: string; note?: string };
+  rolledBackAt?: string;
+  rolledBackBy?: { actor: string; via: string; at: string; note?: string };
+  correctionType?: string;
+  confidence?: "high" | "medium" | "low";
+  uncertainty?: string;
+  independentlyVerifiedAt?: string;
+};
+
 export type ScoringReport = {
   key: string;
   company: string;
@@ -213,10 +261,20 @@ export type ScoringReport = {
     recommendation: string;
     scoredAt: string;
     promptVersion: string;
+    storedFitTotal?: number;
+    scoreConflict?: boolean;
+    authoritativeSource?: string;
+    revisionId?: string;
+    scoreRevised?: boolean;
+    originalAuthoritativeTotal?: number;
+    fingerprintStale?: boolean;
+    staleRevisionTotal?: number;
     detail?: ScoringDetail;
   } | null;
   diagnostic: { runAt: string; promptVersion: string; total: number; detail: ScoringDetail } | null;
   jd: { text: string; title?: string; url?: string } | null;
+  scoreRevision?: ScoreRevisionView | null;
+  scoreRevisions?: ScoreRevisionView[];
 };
 
 export type UpcomingInterview = {

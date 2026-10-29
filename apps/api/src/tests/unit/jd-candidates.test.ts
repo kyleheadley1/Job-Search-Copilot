@@ -8,6 +8,7 @@ import {
   listMissingJobDescriptions,
   MAX_SUBMITTED_CANDIDATES,
   needsJobDescription,
+  revalidateSubmittedCandidateCompleteness,
   submitJdCandidate,
   type JdCandidateStore,
 } from "../../services/gmail/jdRecovery/jdCandidates.service.js";
@@ -382,5 +383,94 @@ describe("submitJdCandidate", () => {
       ),
     ).rejects.toBeInstanceOf(CandidatesFullError);
     expect(evaluations.get(samsara.key)!.recovery.candidates).toHaveLength(MAX_SUBMITTED_CANDIDATES);
+  });
+});
+
+const FLUXCAP_EQUIVALENT_HEADINGS = [
+  "Forward Deployed Software Engineer",
+  "The role",
+  "You’ll work directly with lawyers using FluxCap to understand where they get stuck and build software that helps them move forward.",
+  "You’ll follow projects from the first conversation through production and see how your work performs on real cases.",
+  "What you’ll do",
+  "Work with lawyers and legal engineers to understand a problem and choose a useful first step.",
+  "Build frontend and backend features, data integrations, and AI workflows.",
+  "Write tested, dependable software and handle sensitive case information with care.",
+  "What you’ll bring",
+  "Experience building working software through a job, internship, or substantial project.",
+  "Strong programming fundamentals and familiarity with TypeScript or JavaScript and React.",
+  "Clear communication and a willingness to ask questions when something is unclear.",
+].join("\n");
+
+describe("revalidateSubmittedCandidateCompleteness", () => {
+  it("upgrades a server-downgraded Fluxcap-style candidate without scoring or duplicating", async () => {
+    const seeded = notFound(fluxcap);
+    seeded.recovery = {
+      ...seeded.recovery,
+      status: "unverified",
+      candidates: [
+        {
+          url: "https://www.builtinnyc.com/job/forward-deployed-software-engineer/11912990",
+          source: "mcp",
+          stage: "mcp",
+          matchLevel: "low",
+          title: "Forward Deployed Software Engineer",
+          company: "Fluxcap",
+          text: FLUXCAP_EQUIVALENT_HEADINGS,
+          rawText: FLUXCAP_EQUIVALENT_HEADINGS,
+          completeness: "partial",
+          claimedCompleteness: "full",
+          sourceType: "aggregator",
+        },
+      ],
+    };
+    const { store, evaluations } = storeOf([fluxcap], [seeded]);
+    const result = await revalidateSubmittedCandidateCompleteness(
+      fluxcap.key,
+      "https://www.builtinnyc.com/job/forward-deployed-software-engineer/11912990?utm_source=x",
+      store,
+    );
+    expect(result).toMatchObject({
+      updated: true,
+      completeness: "full",
+      scoringEligible: true,
+      reviewRequired: true,
+      recoveryStatus: "unverified",
+    });
+    const candidate = evaluations.get(fluxcap.key)!.recovery.candidates![0]!;
+    expect(candidate.completeness).toBe("full");
+    expect(candidate.text).toBe(FLUXCAP_EQUIVALENT_HEADINGS);
+    expect(candidate.rawText).toBe(FLUXCAP_EQUIVALENT_HEADINGS);
+    expect(candidate.matchLevel).toBe("low");
+    expect(evaluations.get(fluxcap.key)!.fit).toBeUndefined();
+    expect(evaluations.get(fluxcap.key)!.recovery.candidates).toHaveLength(1);
+  });
+
+  it("does not upgrade a claimed-partial candidate even if the text would now pass", async () => {
+    const seeded = notFound(fluxcap);
+    seeded.recovery = {
+      ...seeded.recovery,
+      status: "unverified",
+      candidates: [
+        {
+          url: "https://www.builtinnyc.com/job/forward-deployed-software-engineer/11912990",
+          source: "mcp",
+          stage: "mcp",
+          matchLevel: "low",
+          text: FLUXCAP_EQUIVALENT_HEADINGS,
+          completeness: "partial",
+          claimedCompleteness: "partial",
+          sourceType: "aggregator",
+        },
+      ],
+    };
+    const { store, evaluations } = storeOf([fluxcap], [seeded]);
+    const result = await revalidateSubmittedCandidateCompleteness(
+      fluxcap.key,
+      "https://www.builtinnyc.com/job/forward-deployed-software-engineer/11912990",
+      store,
+    );
+    expect(result.updated).toBe(false);
+    expect(result.completeness).toBe("partial");
+    expect(evaluations.get(fluxcap.key)!.recovery.candidates![0]!.completeness).toBe("partial");
   });
 });

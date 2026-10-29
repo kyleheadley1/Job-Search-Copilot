@@ -4,6 +4,8 @@ import type { RuleEvaluation, ScoreBreakdown } from "../../types/scoring.js";
 import { isAtsSender } from "../gmail/gmailClassifier.js";
 import { normalizeCompany, sameCompany, type AppliedAtSource, type GmailApplication } from "../gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../gmail/jdRecovery/evaluations.repository.js";
+import { presentFitForDisplay } from "../../lib/authoritativeScore.js";
+import type { ApprovedRevisionOverlay } from "../scoring/scoreRevision.types.js";
 
 /** Applied this recently with no human contact yet: too early to call. */
 export const DECISION_DAYS = 30;
@@ -183,11 +185,12 @@ const fromJob = (job: JobRecord) => {
 
 const fromEvaluation = (
   e: ApplicationEvaluation | undefined,
+  revision?: ApprovedRevisionOverlay | null,
 ): Partial<Pick<InsightRow, "fit" | "extracted" | "rules" | "score" | "recommendedResume">> => {
   const d = e?.fit?.detail;
   if (!e?.fit) return {};
   return {
-    fit: e.fit.total,
+    fit: presentFitForDisplay(e.fit, { revision, evaluation: e }).total,
     ...(d ? { extracted: d.extracted, rules: d.rules, score: d.score, recommendedResume: d.recommendedResume } : {}),
   };
 };
@@ -197,7 +200,12 @@ const fromEvaluation = (
  * is counted once; tracker rows never applied to are left out.
  */
 export const buildInsightRows = (
-  input: { jobs: JobRecord[]; apps: GmailApplication[]; evaluations: Map<string, ApplicationEvaluation> },
+  input: {
+    jobs: JobRecord[];
+    apps: GmailApplication[];
+    evaluations: Map<string, ApplicationEvaluation>;
+    revisions?: Map<string, ApprovedRevisionOverlay>;
+  },
   now = Date.now(),
 ): InsightRow[] => {
   const jobsById = new Map(input.jobs.map((j) => [j.id, j]));
@@ -219,6 +227,7 @@ export const buildInsightRows = (
     if (!job && !app.role && attributedCompanies.some((c) => sameCompany(c, normalizeCompany(app.company)))) continue;
     if (job) used.add(job.id);
     const evaluation = input.evaluations.get(app.key);
+    const revision = input.revisions?.get(app.key);
     const appliedAt = (job && trackerAppliedAt(job)) ?? app.appliedAt ?? null;
     const { outcome, reason } = classifyOutcome(
       {
@@ -230,9 +239,10 @@ export const buildInsightRows = (
       },
       now,
     );
-    const data = job ? fromJob(job) : fromEvaluation(evaluation);
+    const evalFit = fromEvaluation(evaluation, revision);
+    const data = job ? fromJob(job) : evalFit;
     const source = job ? "tracker+gmail" : "gmail";
-    const fit = data.fit ?? evaluation?.fit?.total ?? null;
+    const fit = evalFit.fit ?? data.fit ?? null;
     rows.push({
       id: job?.id ?? app.key,
       company: app.company,

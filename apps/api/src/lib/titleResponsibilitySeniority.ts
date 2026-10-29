@@ -48,7 +48,7 @@ const FOUNDING_ZERO_TO_ONE_RE =
 
 /** Mentorship / ramp language. */
 const MENTORSHIP_SUPPORT_RE =
-  /\b(mentor(?:ship|ed|ing)?|onboarding|ramp(?:\s+up)?|buddy\s+system|pair(?:ed|\s+with)|close\s+supervision|structured\s+training|new\s+grad\s+program|junior[-\s]?friendly|learning\s+environment|coaching)\b/i;
+  /\b(mentor(?:ship|ed|ing)?|onboarding|ramp(?:\s+up)?|buddy\s+system|pair(?:ed|\s+with)|close\s+supervision|structured\s+training|new\s+grad\s+program|junior[-\s]?friendly|learning\s+environment|coaching|learn(?:ing)?\s+under|works?\s+with\s+experienced\s+(?:forward\s+deployed\s+engineers|fdes?|engineers)|under\s+(?:the\s+)?(?:guidance|mentorship|supervision)\s+of)\b/i;
 
 /** Explicit reporting line or named supporting / cross-functional team. */
 const REPORTING_LINE_RE =
@@ -176,11 +176,16 @@ export const statedLevelIsEarlyCareer = (job: ExtractedJobData): boolean => {
   const level = resolveStructuredSeniorityLevel(job);
   if (level && isEarlyCareerStructuredLevel(level)) return true;
   const yearsMin = job.yearsExperience?.min;
+  const yearsMax = job.yearsExperience?.max;
   // Flat 2+ years alone is a mid bar, not "early-career tagging" for mismatch purposes
   // unless also junior/associate chrome.
   if (yearsMin != null && yearsMin <= 1) return true;
-  const blob = normalizeText([job.seniority, job.rawText ?? ""].filter(Boolean).join("\n"));
-  return /\b(junior|entry[-\s]?level|associate|1[-\s]?2\s*years?|1\+\s*years?)\b/i.test(blob);
+  // Explicit 0–3 ramp (Trunk Tools): min at or below 1 with a cap of 3, or a stated 0–3 range.
+  if (yearsMax != null && yearsMax <= 3 && (yearsMin == null || yearsMin <= 1)) return true;
+  const blob = normalizeText([job.seniority, job.rawText ?? "", job.title ?? ""].filter(Boolean).join("\n"));
+  return /\b(junior|entry[-\s]?level|associate|early[-\s]?career|0\s*(?:[–-]|to)\s*[123]\s*years?|1[-\s]?2\s*years?|1\+\s*years?)\b/i.test(
+    blob,
+  );
 };
 
 /**
@@ -238,6 +243,25 @@ export const evaluateTitleResponsibilitySeniority = (
   // Final agreement gate: when managed structure is present and ownership is not
   // unsupervised/total, never fire mismatch (NYT Reflections class).
   if (countervailing && !unsupervised) {
+    mismatch = false;
+  }
+
+  // Early-career FDE ramp (Trunk Tools): title uses the FDE label but the JD is
+  // explicitly 0–3 years with learning under experienced FDEs. Do not treat that
+  // as a senior-title mismatch. "Senior/Staff FDE" and unsupervised ownership stay.
+  const title = normalizeText(job.title ?? "");
+  const earlyYearRange =
+    (job.yearsExperience?.max != null &&
+      job.yearsExperience.max <= 3 &&
+      (job.yearsExperience.min == null || job.yearsExperience.min <= 1)) ||
+    /\b0\s*(?:[–-]|to)\s*[123]\s*years?\b/i.test(jobEvidenceBlob(job));
+  const explicitJuniorFdeRamp =
+    INDUSTRY_SENIOR_TITLE_RE.test(title) &&
+    !TITLE_SENIOR_MODIFIER_RE.test(title) &&
+    statedEarlyCareer &&
+    !unsupervised &&
+    (hasManagedTeamStructure || earlyYearRange);
+  if (explicitJuniorFdeRamp) {
     mismatch = false;
   }
 

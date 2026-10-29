@@ -14,6 +14,23 @@ vi.mock("../../services/jobs/jobs.repository.js", () => ({
   },
 }));
 
+// The service overlays Gmail effective scores at read time; unit tests inject the
+// evaluation + revision lookups instead of reaching Mongo.
+const findByTrackerJobIdsMock = vi.fn();
+const findByKeysMock = vi.fn();
+const loadApprovedOverlaysMock = vi.fn();
+
+vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", () => ({
+  evaluationsRepository: {
+    findByTrackerJobIds: (...args: unknown[]) => findByTrackerJobIdsMock(...args),
+    findByKeys: (...args: unknown[]) => findByKeysMock(...args),
+  },
+}));
+
+vi.mock("../../services/scoring/scoreRevisions.service.js", () => ({
+  loadApprovedOverlays: (...args: unknown[]) => loadApprovedOverlaysMock(...args),
+}));
+
 import { jobsRepository } from "../../services/jobs/jobs.repository.js";
 import { jobsService, JobNoJdSourceError } from "../../services/jobs/jobs.service.js";
 
@@ -100,6 +117,10 @@ describe("jobsService.runRetriage", () => {
     vi.clearAllMocks();
     vi.mocked(jobsRepository.getById).mockResolvedValue(null);
     vi.mocked(jobsRepository.upsertJob).mockReset();
+    triageJobMock.mockReset();
+    findByTrackerJobIdsMock.mockResolvedValue(new Map());
+    findByKeysMock.mockResolvedValue(new Map());
+    loadApprovedOverlaysMock.mockResolvedValue(new Map());
   });
 
   it("re-scores a draft job in place and clears generated assets", async () => {
@@ -178,6 +199,47 @@ describe("jobsService.runRetriage", () => {
     expect(job.score.total).toBe(85);
     expect(job.trackerSpreadsheet?.latestScore).toBe("85");
     expect(job.trackerSpreadsheet?.originalAltScore).toBe("62");
+  });
+
+  it("never persists the read-time effective-score overlay on retriage", async () => {
+    vi.mocked(jobsRepository.getById).mockResolvedValue(
+      triageResult({
+        id: "tracked-linked",
+        score: score62,
+        recommendation: "stretch",
+        status: "applied",
+        tracker: { priority: "medium", recommendedAction: "Apply", statusOutcome: "applied", gmailKey: "acme::engineer" },
+        scoreHistory: [{ scoredAt: "2026-01-01T00:00:00.000Z", score: score62, recommendation: "stretch" }],
+      }),
+    );
+    vi.mocked(jobsRepository.upsertJob).mockImplementation(async (record) => record);
+    findByTrackerJobIdsMock.mockResolvedValue(
+      new Map([
+        [
+          "tracked-linked",
+          {
+            key: "acme::engineer",
+            company: "Acme",
+            role: "Engineer",
+            trackerJobId: "tracked-linked",
+            fit: { total: 48, recommendation: "weak", recommendedResume: "BASE", scoredAt: "2026-01-03T00:00:00.000Z", promptVersion: "test" },
+          },
+        ],
+      ]),
+    );
+    triageJobMock.mockResolvedValueOnce(triageResult({ id: "ignored" }));
+
+    const { job, tracked } = await jobsService.runRetriage("tracked-linked");
+
+    expect(tracked).toBe(true);
+    const persisted = vi.mocked(jobsRepository.upsertJob).mock.calls[0]?.[0];
+    expect(persisted).toBeDefined();
+    expect(persisted).not.toHaveProperty("effectiveScore");
+    expect(persisted?.score.total).toBe(85);
+    // Response still presents the linked Gmail evaluation, without touching jobs.score.
+    expect(job.score.total).toBe(85);
+    expect(job.effectiveScore?.total).toBe(48);
+    expect(job.effectiveScore?.storedTrackerTotal).toBe(85);
   });
 
   it("rejects re-triage when no JD source is stored", async () => {

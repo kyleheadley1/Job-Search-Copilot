@@ -67,4 +67,61 @@ describe("classifyRoleLane (Item G)", () => {
     });
     expect(lane.label).toBe("platform_infra");
   });
+
+  it("keeps Vercel-style IAM/Kubernetes platform work in platform_infra", () => {
+    const lane = classifyRoleLane({
+      company: "Vercel",
+      title: "Platform Engineer, IAM",
+      stack: ["Kubernetes", "Terraform", "IAM"],
+      requiredSkills: ["Kubernetes", "IAM", "SAML"],
+      preferredSkills: [],
+      domainTags: ["identity", "IAM"],
+      responsibilities: [
+        "Build enterprise IAM integrations: SAML, OAuth, OIDC",
+        "Run Kubernetes clusters and identity infrastructure",
+      ],
+      requirements: ["Experience operating Kubernetes and IAM systems"],
+      rawText:
+        "Platform Engineer, IAM. Build enterprise IAM integrations: SAML, OAuth, OIDC, LDAP. Kubernetes and Terraform for identity infrastructure.",
+    });
+    expect(lane.label).toBe("platform_infra");
+  });
+
+  it("classifies a Front-End Engineer JD as product_frontend even if APIs are mentioned", () => {
+    const lane = classifyRoleLane({
+      company: "Tavily",
+      title: "Software Engineer",
+      stack: ["TypeScript", "React", "Next.js"],
+      requiredSkills: ["TypeScript", "React", "Next.js"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: [
+        "Own the frontend product experience in TypeScript, React, and Next.js",
+        "Integrate with backend APIs",
+      ],
+      requirements: ["TypeScript", "React", "Next.js"],
+      rawText: [
+        "Tavily",
+        "Front-End Engineer",
+        "Own frontend product surfaces in TypeScript, React, and Next.js.",
+        "Work with backend APIs and GraphQL while the core job is UI ownership.",
+      ].join("\n"),
+    });
+    expect(lane.label).toBe("product_frontend");
+  });
+
+  it("keeps a genuine backend/API product role in product_backend", () => {
+    const lane = classifyRoleLane({
+      company: "Acme",
+      title: "Backend Engineer",
+      stack: ["Node.js", "PostgreSQL"],
+      requiredSkills: ["Node.js"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Design and implement REST APIs and backend services"],
+      requirements: ["Experience building backend APIs"],
+      rawText: "Backend Engineer. Design and implement REST APIs and backend services.",
+    });
+    expect(lane.label).toBe("product_backend");
+  });
 });

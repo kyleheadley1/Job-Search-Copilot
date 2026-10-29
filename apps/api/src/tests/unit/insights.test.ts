@@ -16,6 +16,7 @@ import type { ScoringAdjustment } from "../../services/insights/insights.reposit
 import { buildSummaryPrompt, runInsights, syncAdjustments, type InsightsDeps } from "../../services/insights/insights.js";
 import { auc, aucPermutationP, benjaminiHochberg, fisherExact, wilson } from "../../services/insights/stats.js";
 import { recomputeStoredJobScore } from "../../lib/recomputeStoredJobScore.js";
+import { evaluationFingerprint } from "../../lib/evaluationFingerprint.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import type { ExtractedJobData, JobRecord } from "../../types/job.js";
 
@@ -207,6 +208,87 @@ describe("buildInsightRows", () => {
   it("uses the tracker job's score when linked", () => {
     const [row] = buildInsightRows({ jobs: [job("a")], apps: [app("x", { trackerJobId: "a" })], evaluations: new Map() }, NOW);
     expect(row!.fit).toBe(70);
+  });
+
+  it("prefers a Gmail evaluation's effective approved score over the tracker capture", () => {
+    const evaluation = {
+      key: "x",
+      company: "Co x",
+      role: "Software Engineer",
+      appliedAt: daysAgo(40),
+      recovery: { status: "scored", attempts: [], serperQueries: 0 },
+      jd: { text: "TypeScript React. 2+ years.", textHash: "h" },
+      fit: {
+        total: 25,
+        recommendation: "weak",
+        recommendedResume: "BASE",
+        scoredAt: daysAgo(39),
+        promptVersion: "test",
+      },
+      outcome: { status: "applied", updatedAt: daysAgo(39), history: [] },
+      createdAt: daysAgo(39),
+      updatedAt: daysAgo(39),
+    } as ApplicationEvaluation;
+    const [withoutRevision] = buildInsightRows(
+      {
+        jobs: [job("a")],
+        apps: [app("x", { trackerJobId: "a" })],
+        evaluations: new Map([["x", evaluation]]),
+      },
+      NOW,
+    );
+    expect(withoutRevision!.fit).toBe(25);
+
+    const [withRevision] = buildInsightRows(
+      {
+        jobs: [job("a")],
+        apps: [app("x", { trackerJobId: "a" })],
+        evaluations: new Map([["x", evaluation]]),
+        revisions: new Map([
+          [
+            "x",
+            {
+              revisionId: "r1",
+              applicationKey: "x",
+              evaluationFingerprint: "deadbeef",
+              status: "approved",
+              correctedTotal: 71,
+              correctedRecommendation: "apply",
+              originalTotal: 25,
+              originalRecommendation: "weak",
+            },
+          ],
+        ]),
+      },
+      NOW,
+    );
+    expect(withRevision!.fit).toBe(25);
+
+    const fingerprint = evaluationFingerprint(evaluation);
+    const [approved] = buildInsightRows(
+      {
+        jobs: [job("a")],
+        apps: [app("x", { trackerJobId: "a" })],
+        evaluations: new Map([["x", evaluation]]),
+        revisions: new Map([
+          [
+            "x",
+            {
+              revisionId: "r1",
+              applicationKey: "x",
+              evaluationFingerprint: fingerprint,
+              status: "approved",
+              correctedTotal: 71,
+              correctedRecommendation: "apply",
+              originalTotal: 25,
+              originalRecommendation: "weak",
+            },
+          ],
+        ]),
+      },
+      NOW,
+    );
+    expect(approved!.fit).toBe(71);
   });
 });
 

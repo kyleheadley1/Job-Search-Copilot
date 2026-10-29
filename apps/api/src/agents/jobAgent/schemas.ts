@@ -532,6 +532,20 @@ export const JobRecordSchema = z.object({
     .optional(),
   statusHistory: z.array(StatusHistoryRecordSchema).optional(),
   scoringJdTextHash: z.string().optional(),
+  effectiveScore: z
+    .object({
+      total: z.number(),
+      recommendation: z.string(),
+      storedTrackerTotal: z.number(),
+      applicationKey: z.string(),
+      scoreRevised: z.boolean().optional(),
+      fingerprintStale: z.boolean().optional(),
+      revisionId: z.string().optional(),
+      staleRevisionTotal: z.number().optional(),
+      originalAuthoritativeTotal: z.number().optional(),
+      authoritativeSource: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const TriageRequestSchema = z

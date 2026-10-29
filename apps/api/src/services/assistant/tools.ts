@@ -4,6 +4,8 @@ import type { TopJobRecord } from "../../types/topJob.js";
 import type { AgentSuggestion } from "../agent/suggestions.repository.js";
 import type { GmailApplication } from "../gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../gmail/jdRecovery/evaluations.repository.js";
+import { presentFitForDisplay } from "../../lib/authoritativeScore.js";
+import { loadApprovedOverlays } from "../scoring/scoreRevisions.service.js";
 import type { MonthSpend } from "../gmail/jdRecovery/recoveryMetrics.js";
 import type { ToolDef } from "../llm/responsesClient.js";
 import type { AlertListingDoc } from "../topJobs/alertListings.repository.js";
@@ -66,7 +68,7 @@ const jobSummary = (j: JobRecord) => ({
   company: j.extracted.company,
   title: j.extracted.title,
   status: j.status,
-  score: j.score?.total ?? null,
+  score: j.effectiveScore?.total ?? j.score?.total ?? null,
   appliedAt: day(j.tracker?.appliedAt),
   updatedAt: day(j.updatedAt),
 });
@@ -120,6 +122,7 @@ export const buildAssistantTools = (deps: AssistantToolDeps, created: AssistantP
         const app = (await deps.loadApps()).find((a) => a.key === key);
         if (!app) return { error: `No application with key ${key}` };
         const evaluation = await deps.getEvaluation(key);
+        const overlays = evaluation?.fit ? await loadApprovedOverlays([key]) : new Map();
         return {
           ...appSummary(app),
           emails: app.emails.slice(-15).map((e) => ({ date: day(e.date), event: e.eventType, from: e.from, subject: e.subject })),
@@ -131,7 +134,13 @@ export const buildAssistantTools = (deps: AssistantToolDeps, created: AssistantP
           })),
           actionDeadline: app.actionNeeded?.deadline ?? null,
           fit: evaluation?.fit
-            ? { total: evaluation.fit.total, recommendation: evaluation.fit.recommendation }
+            ? (() => {
+                const presented = presentFitForDisplay(evaluation.fit, {
+                  revision: overlays.get(key),
+                  evaluation,
+                });
+                return { total: presented.total, recommendation: presented.recommendation };
+              })()
             : null,
           postingFound: Boolean(evaluation?.jd?.text),
         };

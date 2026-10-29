@@ -359,3 +359,28 @@ export function trackerDisplayDate(job: JobRecord): TrackerDisplayDate {
     sourceValue: job.createdAt,
   };
 }
+
+export function displayedJobScore(job: Pick<JobRecord, "score" | "effectiveScore">): number {
+  return job.effectiveScore?.total ?? job.score.total;
+}
+
+export function displayedJobRecommendation(
+  job: Pick<JobRecord, "recommendation" | "effectiveScore">,
+): string {
+  return job.effectiveScore?.recommendation ?? job.recommendation;
+}
+
+export function jobScoreTitle(job: Pick<JobRecord, "score" | "effectiveScore">): string {
+  const overlay = job.effectiveScore;
+  if (!overlay) return `Score ${job.score.total}`;
+  if (overlay.fingerprintStale) {
+    return `Approved revision ${overlay.staleRevisionTotal ?? "—"} is inactive because the stored evaluation changed. Showing ${overlay.total}. Tracker capture remains ${overlay.storedTrackerTotal}.`;
+  }
+  if (overlay.scoreRevised) {
+    return `Approved revision ${overlay.total} (Gmail). Tracker capture remains ${overlay.storedTrackerTotal}.`;
+  }
+  if (overlay.total !== overlay.storedTrackerTotal) {
+    return `Gmail effective score ${overlay.total}. Tracker capture ${overlay.storedTrackerTotal}.`;
+  }
+  return `Score ${overlay.total}`;
+}

@@ -8,8 +8,11 @@ import {
   agencyDisclosureNote,
   appliedAtIso,
   appliedAtToDateInputValue,
+  displayedJobRecommendation,
+  displayedJobScore,
   jdSourceText,
   jobHeaderLabel,
+  jobScoreTitle,
 } from "../lib/jobDisplay";
 
 const statuses: JobStatus[] = [
@@ -107,7 +110,18 @@ export const RoleDetailPage = () => {
         <h3>{jobHeaderLabel(job.extracted)}</h3>
         {agencyNote ? <p className="muted agency-note">{agencyNote}</p> : null}
         <p>
-          Score: <strong>{job.score.total}</strong> | Recommendation: <strong>{RECOMMENDATION_LABELS[job.recommendation] ?? job.recommendation}</strong> | Resume:{" "}
+          Score:{" "}
+          <strong title={jobScoreTitle(job)}>
+            {displayedJobScore(job)}
+            {job.effectiveScore?.scoreRevised ? " (revised)" : ""}
+            {job.effectiveScore?.fingerprintStale ? " (revision inactive)" : ""}
+          </strong>{" "}
+          | Recommendation:{" "}
+          <strong>
+            {RECOMMENDATION_LABELS[displayedJobRecommendation(job) as keyof typeof RECOMMENDATION_LABELS] ??
+              displayedJobRecommendation(job)}
+          </strong>{" "}
+          | Resume:{" "}
           <strong>{job.recommendedResume}</strong>
         </p>
         <p>

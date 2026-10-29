@@ -206,4 +206,30 @@ describe("addMissingApplicationsToTracker", () => {
   it("never re-adds once flagged, even if the tracker row was deleted", () => {
     expect(isAutoAddCandidate(app(), evaluation({ trackerAutoAddedAt: "2026-09-05T00:00:00.000Z" }))).toBe(false);
   });
+
+  it("adds a confirmed MCP scoring the same way as other scored rows, without changing an existing tracker status", async () => {
+    const confirmed = evaluation({
+      recovery: {
+        status: "scored",
+        attempts: [],
+        serperQueries: 0,
+        foundVia: "mcp",
+        verifiedBy: "user",
+        url: "https://www.builtinnyc.com/job/forward-deployed-software-engineer/11912990",
+      },
+    });
+    const { result, saved } = await run([app({ status: "applied" })], [confirmed]);
+    expect(result.added).toBe(1);
+    expect(saved[0]!.status).toBe("applied");
+    expect(saved[0]!.tracker).toMatchObject({
+      source: "gmail",
+      gmailKey: "acme::software engineer",
+      statusOutcome: "applied",
+    });
+    expect(saved[0]!.score.total).toBe(82);
+
+    const alreadyTracked = app({ trackerJobId: "existing-job", trackerStatus: "interviewing" });
+    const { result: skipped } = await run([alreadyTracked], [confirmed]);
+    expect(skipped.added).toBe(0);
+  });
 });

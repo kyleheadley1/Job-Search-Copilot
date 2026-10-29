@@ -1,5 +1,11 @@
 import type { ExtractedJobData } from "../types/job.js";
-import { evaluateDisjunctiveLanguageRequirement, filterGapsAfterDisjunctiveMatch, lineDisjunctiveRequirementSatisfied } from "./disjunctiveLanguageRequirement.js";
+import {
+  evaluateDisjunctiveLanguageRequirement,
+  filterGapsAfterDisjunctiveMatch,
+  languageIsIllustrativeExampleOnly,
+  languageOnlyInDisjunctiveChoice,
+  lineDisjunctiveRequirementSatisfied,
+} from "./disjunctiveLanguageRequirement.js";
 import { GO_LANGUAGE_PATTERNS } from "./goLanguage.js";
 import { filterLanguagesToJdPresence, termGroundedInJdRawText } from "./jdLanguagePresence.js";
 import { termIsPreferredOrNarrativeOnly } from "./jdTagProvenance.js";
@@ -167,6 +173,85 @@ const pythonFlexibleWithJsTs = (blob: string): boolean =>
     /\b(java\s*script|typescript|js|node)\s+(and\s*\/\s*or|and\/or|or)\s+python\b/i.test(blob) ||
     /\b(either|any)\s+(of\s+)?(python|typescript|javascript)\b/i.test(blob));
 
+const STACK_INVENTORY_FRAMING =
+  /\b(our (?:tech )?stack|tech stack|we (?:use|work with)|stack includes|technologies we use|comfortable working across both front-end and back-end)\b/i;
+
+const CONJUNCTIVE_ALL_REQUIRED =
+  /\b(must (?:have|know) all|required to know all|proficiency in all of)\b/i;
+
+const PYTHON_EXCLUSIVE =
+  /\b(must have|required|primary (?:backend )?language|professional experience with|strong proficiency in)\b[^.\n]{0,60}\bpython\b|\bpython\b[^.\n]{0,60}\b(required|must have|primary)\b/i;
+
+const PYTHON_CONJUNCTIVE_AND =
+  /\b(must (?:have|know)|required(?: skills)?:?|proficiency in)\b[^.\n]{0,120}\band\b[^.\n]{0,80}\bpython\b/i;
+
+const PYTHON_BACKEND_FRAMEWORK = /\b(fastapi|django|flask)\b/i;
+
+const lineHasJsOrTs = (line: string): boolean =>
+  /\b(type\s*script|typescript|javascript|node(?:\.js)?|react)\b/i.test(line);
+
+/** Descriptive "our stack: A, B, C" inventories — not "must know A, B, and C". */
+export const lineLooksLikeTechStackInventory = (line: string): boolean => {
+  const t = normalizeText(line);
+  if (!t || CONJUNCTIVE_ALL_REQUIRED.test(t)) return false;
+  if (STACK_INVENTORY_FRAMING.test(t)) return true;
+  if (/\btech stack\s*:/i.test(t)) return true;
+  return false;
+};
+
+const sentenceContainsPythonInventory = (job: ExtractedJobData): boolean => {
+  const blob = [job.rawText ?? "", ...(job.requirements ?? []), ...(job.requiredSkills ?? [])].join(
+    "\n",
+  );
+  return blob.split(/[\n.;]/).some((sentence) => {
+    const s = sentence.trim();
+    return lineLooksLikeTechStackInventory(s) && /\bpython\b/i.test(s) && lineHasJsOrTs(s);
+  });
+};
+
+export const pythonIsExclusiveCoreRequirement = (job: ExtractedJobData): boolean => {
+  if (/\bpython\b/i.test(job.title ?? "")) return true;
+  const blob = [
+    job.rawText ?? "",
+    ...(job.requirements ?? []),
+    ...(job.requiredSkills ?? []),
+    ...(job.responsibilities ?? []),
+  ].join("\n");
+  for (const line of blob.split(/\n/)) {
+    const t = line.trim();
+    if (!/\bpython\b/i.test(t) && !PYTHON_BACKEND_FRAMEWORK.test(t)) continue;
+    if (lineLooksLikeTechStackInventory(t) && lineHasJsOrTs(t)) continue;
+    if (PYTHON_EXCLUSIVE.test(t) && !lineHasJsOrTs(t)) return true;
+    if (PYTHON_EXCLUSIVE.test(t) && !lineLooksLikeTechStackInventory(t)) return true;
+    if (PYTHON_CONJUNCTIVE_AND.test(t) && !lineLooksLikeTechStackInventory(t)) return true;
+    if (
+      /\bstrong fundamentals\b/i.test(t) &&
+      /\bpython\b/i.test(t) &&
+      !lineLooksLikeTechStackInventory(t) &&
+      !/\b(?:such as|e\.g\.|and\s*\/\s*or|\bor\b)\b/i.test(t)
+    ) {
+      return true;
+    }
+    if (
+      PYTHON_BACKEND_FRAMEWORK.test(t) &&
+      !lineHasJsOrTs(t) &&
+      /\b(experience|required|must|proficiency|apis?|backend|build)\b/i.test(t)
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/** Python listed beside TS/React as a team stack, not as the required primary language. */
+export const pythonOnMixedStackInventory = (job: ExtractedJobData, line?: string): boolean => {
+  if (pythonIsExclusiveCoreRequirement(job)) return false;
+  if (line && lineLooksLikeTechStackInventory(line) && /\bpython\b/i.test(line) && lineHasJsOrTs(line)) {
+    return true;
+  }
+  return sentenceContainsPythonInventory(job);
+};
+
 /**
  * Two-tier stack mismatch: Tier 1 = missing required core language; Tier 2 = same-family framework gap.
  * Only required skills count — preferred / nice-to-have are ignored for gap detection.
@@ -196,9 +281,11 @@ export const analyzeStackMismatch = (
     for (const token of tokens) {
       if (token.claimableId && hasClaimableCoverage(claimable, token.claimableId)) continue;
       if (token.id === "python" && pythonFlexible) continue;
+      if (token.id === "python" && pythonOnMixedStackInventory(job, line)) continue;
 
       if (token.kind === "core_language") {
         if (!isCoreLanguageRequirement(token, line, i) && !lineFromJdStackArray(line, job)) continue;
+        if (token.id === "python" && pythonOnMixedStackInventory(job, line)) continue;
         if (jsFrameworkFlexible && token.family === "javascript") continue;
         coreLanguageGaps.push(token.label);
         continue;
@@ -240,14 +327,16 @@ export const analyzeStackMismatch = (
     }
   }
 
-  const uniqueCoreRaw = filterGapsAfterDisjunctiveMatch(
-    [...new Set(coreLanguageGaps)],
-    evaluateDisjunctiveLanguageRequirement(job, claimable),
-  );
+  const disjunctive = evaluateDisjunctiveLanguageRequirement(job, claimable);
+  const uniqueCoreRaw = filterGapsAfterDisjunctiveMatch([...new Set(coreLanguageGaps)], disjunctive);
   // Language gaps must appear in JD language set; infra stack chips must appear in JD rawText.
   // Preferred/nice-to-have-only languages never become tier-1 core gaps.
+  // Example-only languages ("such as Go", "e.g., Python/Go") are not mandatory even when
+  // the example set is unsatisfied; conjunctive "TypeScript, Python, and React" stays.
   const jdValidatedCore = uniqueCoreRaw.filter((label) => {
     if (termIsPreferredOrNarrativeOnly(label, job)) return false;
+    if (languageIsIllustrativeExampleOnly(job, label)) return false;
+    if (languageOnlyInDisjunctiveChoice(job, label) && disjunctive.satisfied) return false;
     if (/^(Terraform|Redis|Kubernetes)$/i.test(label)) {
       return termGroundedInJdRawText(label, job);
     }

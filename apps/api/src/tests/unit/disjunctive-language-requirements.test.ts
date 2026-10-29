@@ -64,4 +64,61 @@ describe("disjunctive vs exclusive language gates", () => {
     expect(isExclusiveCoreLanguageRequirement(blob, "Go")).toBe(true);
     expect(evaluateDisjunctiveLanguageRequirement(job, claimable).satisfied).toBe(false);
   });
+
+  it("does not require every language in NYT-style 'technologies such as' examples", () => {
+    const job: ExtractedJobData = {
+      company: "The New York Times",
+      title: "Software Engineer, Reflections",
+      stack: ["Go", "Node.js", "GraphQL"],
+      requiredSkills: ["Go", "Node.js"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Lead feature development with support from senior engineers"],
+      requirements: ["Experience with technologies such as Go, Node.js/Express, GraphQL."],
+      rawText:
+        "Software Engineer, Reflections. Experience with technologies such as Go, Node.js/Express, GraphQL.",
+    };
+    const analysis = analyzeStackMismatch(job, claimableFromProfile());
+    expect(analysis.stackMismatch).toBe(false);
+    expect(analysis.coreLanguageGap).not.toContain("Go");
+  });
+
+  it("does not treat Rippling-style backend-language examples as mandatory Python and Go", () => {
+    const job: ExtractedJobData = {
+      company: "Rippling",
+      title: "Software Engineer, Backend, IT Product",
+      stack: ["Python", "Go"],
+      requiredSkills: ["Python", "Go"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Build backend services for IT product"],
+      requirements: ["Experience using a backend language (e.g., Python/Go)."],
+      rawText:
+        "Software Engineer, Backend, IT Product. Experience using a backend language (e.g., Python/Go).",
+    };
+    const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+    const analysis = analyzeStackMismatch(job, tsOnly);
+    expect(analysis.stackMismatch).toBe(false);
+    expect(analysis.coreLanguageGap).not.toContain("Python");
+    expect(analysis.coreLanguageGap).not.toContain("Go");
+  });
+
+  it("keeps conjunctive TypeScript, Python, and React as a Python core requirement", () => {
+    const job: ExtractedJobData = {
+      company: "Arbital Health",
+      title: "Full Stack Engineer",
+      stack: ["TypeScript", "Python", "React"],
+      requiredSkills: ["TypeScript", "Python", "React"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Build full-stack product features"],
+      requirements: ["Strong fundamentals in TypeScript, Python, and React."],
+      rawText:
+        "Full Stack Engineer.\nRequirements:\nStrong fundamentals in TypeScript, Python, and React.",
+    };
+    const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+    const analysis = analyzeStackMismatch(job, tsOnly);
+    expect(analysis.stackMismatch).toBe(true);
+    expect(analysis.coreLanguageGap).toContain("Python");
+  });
 });

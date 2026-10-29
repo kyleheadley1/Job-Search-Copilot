@@ -7,6 +7,8 @@ import { withLlmContext } from "../../llm/llmUsage.js";
 import type { JobRecord } from "../../../types/job.js";
 import type { ResumeContextSet } from "../../../types/resumeContext.js";
 import { recomputeStoredJobScore } from "../../../lib/recomputeStoredJobScore.js";
+import { presentFitForDisplay, sealAuthoritativeScore } from "../../../lib/authoritativeScore.js";
+import type { ApprovedRevisionOverlay } from "../../scoring/scoreRevision.types.js";
 import {
   getGmailApplications,
   normalizeCompany,
@@ -122,10 +124,15 @@ const CATEGORY_KEYS = [
 ] as const;
 
 export const fitFromJob = (job: JobRecord): NonNullable<ApplicationEvaluation["fit"]> => {
-  const s = job.score;
+  const sealed = sealAuthoritativeScore({
+    score: job.score,
+    recommendation: job.recommendation,
+  });
+  const s = sealed.score;
+  job = { ...job, score: s, recommendation: sealed.recommendation };
   return {
     total: s.total,
-    recommendation: job.recommendation,
+    recommendation: sealed.recommendation,
     recommendedResume: job.recommendedResume,
     scoredAt: new Date().toISOString(),
     promptVersion: SCORER_VERSION,
@@ -220,11 +227,14 @@ export type ScoringReport = {
   jd: { text: string; title?: string; url?: string } | null;
 };
 
-export const toScoringReport = (e: ApplicationEvaluation): ScoringReport => ({
+export const toScoringReport = (
+  e: ApplicationEvaluation,
+  revision?: ApprovedRevisionOverlay | null,
+): ScoringReport => ({
   key: e.key,
   company: e.company,
   role: e.role,
-  fit: e.fit ?? null,
+  fit: e.fit ? presentFitForDisplay(e.fit, { revision, evaluation: e }) : null,
   diagnostic: e.diagnostic ?? null,
   jd: e.jd ? { text: e.jd.text, title: e.jd.title, url: e.recovery.url } : null,
 });

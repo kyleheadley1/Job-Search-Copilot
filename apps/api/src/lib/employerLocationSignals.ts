@@ -68,6 +68,15 @@ const STRICT_FINANCE_PHRASES = [
 const includesAny = (haystack: string, needles: string[]): boolean =>
   needles.some((needle) => haystack.includes(needle));
 
+/** Drop benefits / wellness boilerplate so 401k cannot open the finance path. */
+const stripBenefitsBoilerplate = (text: string): string =>
+  text
+    .replace(/\bbenefits?\b[:\s-][^\n.]{0,400}/gi, " ")
+    .replace(
+      /\b(401\(?k\)?|retirement\s+planning|financial\s+wellness|pension\s+(?:plan|education)|health\s+insurance|competitive\s+salary)\b/gi,
+      " ",
+    );
+
 const BANK_LIKE_COMPANY = /\b(bank|bancorp|bancshares)\b/i;
 
 /**
@@ -76,8 +85,12 @@ const BANK_LIKE_COMPANY = /\b(bank|bancorp|bancshares)\b/i;
  */
 export const textImpliesSellsToFinanceCustomers = (text: string): boolean => {
   const n = normalizeText(text);
-  return /\b(sell(?:s|ing)?\s+(?:software|products?|solutions?|ai)\s+to|customers?\s+(?:include|are|in)|used\s+by\s+(?:finance|insurance|banks?)|helps?\s+(?:finance|insurance)\s+(?:operations?\s+)?teams|for\s+(?:insurance\s+carriers?|banks?|financial\s+services)|finance\s+and\s+insurance\s+(?:operations?\s+)?teams|fortune\s+500\s+customers|builds?\s+(?:ai\s+)?(?:software|tools|systems)\s+for\s+(?:insurance|banks?|financial))\b/i.test(
-    n,
+  return (
+    /\b(sell(?:s|ing)?\s+(?:software|products?|solutions?|ai)\s+to|customers?\s+(?:include|are|in)|used\s+by\s+(?:finance|insurance|banks?)|helps?\s+(?:finance|insurance)\s+(?:operations?\s+)?teams|for\s+(?:insurance\s+carriers?|banks?|financial\s+services)|finance\s+and\s+insurance\s+(?:operations?\s+)?teams|fortune\s+500\s+customers|builds?\s+(?:ai\s+)?(?:software|tools|systems)\s+for\s+(?:insurance|banks?|financial))\b/i.test(
+      n,
+    ) ||
+    /\b(?:hr|human resources|payroll|it product|workforce)\b[^.\n]{0,48}\bfinance\b/i.test(n) ||
+    /\bhr,\s*it(?:,|\s+and)\s+finance\b/i.test(n)
   );
 };
 
@@ -89,7 +102,7 @@ const NAMED_FINANCE_EMPLOYER =
 
 /** Explicit finance / banking / trading employer or JD — not generic "enterprise" or "customers". */
 export const detectStrictFinanceEmployerContext = (combinedText: string, companyNorm: string): boolean => {
-  const c = normalizeText(combinedText);
+  const c = stripBenefitsBoilerplate(normalizeText(combinedText));
   const co = normalizeText(companyNorm);
   if (BANK_LIKE_COMPANY.test(co) && !/\bfood\s+bank\b/i.test(co)) return true;
   if (EMPLOYER_FINANCE_SELF_IDENTITY.test(c)) return true;

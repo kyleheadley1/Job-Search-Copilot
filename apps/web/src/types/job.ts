@@ -282,6 +282,18 @@ export type JobRecord = {
   status: JobStatus;
   createdAt: string;
   updatedAt: string;
+  effectiveScore?: {
+    total: number;
+    recommendation: string;
+    storedTrackerTotal: number;
+    applicationKey: string;
+    scoreRevised?: boolean;
+    fingerprintStale?: boolean;
+    revisionId?: string;
+    staleRevisionTotal?: number;
+    originalAuthoritativeTotal?: number;
+    authoritativeSource?: string;
+  };
   scoreHistory?: Array<{
     scoredAt: string;
     score: ScoreBreakdown;

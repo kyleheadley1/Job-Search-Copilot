@@ -139,13 +139,6 @@ export const extractInlineJd = (body: string): string | undefined => {
   return headings >= 2 ? text : undefined;
 };
 
-/** True when the text is long enough and has at least two JD section headings. Never upgrades a caller-claimed partial. */
-export const jdLooksComplete = (text: string, minChars: number): boolean => {
-  const trimmed = text.trim();
-  if (trimmed.length < minChars) return false;
-  return JD_HEADINGS.filter((re) => re.test(trimmed)).length >= 2;
-};
-
 /** Combine evidence across every email in one application, newest email first. */
 export const collectEmailEvidence = (emails: ParsedEmail[]): EmailEvidence => {
   const ordered = [...emails].sort((a, b) => b.date.localeCompare(a.date));

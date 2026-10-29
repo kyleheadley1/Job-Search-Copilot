@@ -206,9 +206,13 @@ export const scoreDomainMatchForListing = (
   if (rules.healthcareProductEngineering) {
     return clamp01((rawScore.domainFit / 10) * 0.65 + 0.2);
   }
+  const domainSpecificBlob = blob.replace(
+    /[^\n]*\b(a plus|preferred|nice[- ]to[- ]have|considered a plus)[^\n]*/gi,
+    " ",
+  );
   const domainSpecific =
     /\b(ehr|hipaa|clinical|healthcare compliance|medical records|phi|fda|gaap|asc\s*606|payments compliance)\b/i.test(
-      blob,
+      domainSpecificBlob,
     );
   const profileDomain = /\b(ehr|hipaa|clinical|healthcare|gaap|payments|fintech)\b/i.test(resume);
   if (domainSpecific && !profileDomain) return 0.32;

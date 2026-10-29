@@ -206,6 +206,22 @@ export type JobRecord = {
    * When retriage sees the same hash, stored LLM category scores are reused.
    */
   scoringJdTextHash?: string;
+  /**
+   * Read-time Gmail effective score when a linked evaluation exists.
+   * `score.total` remains the stored tracker capture and is never overwritten.
+   */
+  effectiveScore?: {
+    total: number;
+    recommendation: Recommendation | string;
+    storedTrackerTotal: number;
+    applicationKey: string;
+    scoreRevised?: boolean;
+    fingerprintStale?: boolean;
+    revisionId?: string;
+    staleRevisionTotal?: number;
+    originalAuthoritativeTotal?: number;
+    authoritativeSource?: string;
+  };
 };
 
 export type StatusHistoryRecord = {

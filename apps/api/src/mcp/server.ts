@@ -10,7 +10,14 @@ const jsonResult = (data: unknown, isError = false) => ({
 export const createMcpServer = (deps: McpDeps): McpServer => {
   const server = new McpServer({ name: "job-search-copilot", version: "1.0.0" });
   for (const tool of MCP_TOOLS) {
-    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (args) => {
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        ...("annotations" in tool && tool.annotations ? { annotations: tool.annotations } : {}),
+      },
+      async (args: unknown) => {
       try {
         return jsonResult(await runMcpTool(tool.name, args, deps));
       } catch (error) {

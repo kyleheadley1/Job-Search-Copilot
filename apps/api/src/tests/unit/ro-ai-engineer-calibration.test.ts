@@ -106,6 +106,8 @@ describe("hard gate display consistency", () => {
       title: "Staff AI Engineer",
       seniority: "Staff",
       yearsExperience: { min: 8, raw: "8+ years" },
+      requirements: ["8+ years of professional software engineering experience"],
+      rawText: "Staff AI Engineer. 8+ years of professional software engineering experience.",
     };
     const rules = evaluateRules(job, userProfile, { activeResumeType: "BASE" });
     expect(rules.seniorityOverreach).toBe(true);

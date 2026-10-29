@@ -110,7 +110,16 @@ const CHOICE_LIST_ENUM =
   /\b([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?)(?:\s*,\s*([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?)){1,12}(?:\s*,?\s*(?:and|or|and\s*\/\s*or)\s+([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?))?/i;
 
 const EXCLUSIVE_REQUIREMENT =
-  /\b(must have|required|professional experience with|strong proficiency in|primary language is|our (?:main|primary) (?:backend )?language|leads? with)\b/i;
+  /\b(must have|required|professional experience with|strong proficiency in|strong fundamentals in|primary language is|our (?:main|primary) (?:backend )?language|leads? with)\b/i;
+
+/** Illustrative examples — not a closed "must match one of these" set.
+ * Do not require a trailing word boundary after `e.g.` (`e.g., Python` has comma, not `\b`).
+ */
+const ILLUSTRATIVE_EXAMPLE_FRAMING = /\b(?:such as|e\.g\.|eg\.)/i;
+
+/** Closed choice: candidate must match at least one listed language. */
+const CLOSED_CHOICE_FRAMING =
+  /\b(?:at\s+least\s+(?:one|\d+|1)|one\s+of(?:\s+the\s+following)?|any(?:\s+one)?\s+of|one\s+or\s+more\s+of|proficiency\s+in\s+at\s+least|experience\s+with\s+any\s+of)\b/i;
 
 export type DisjunctiveLanguageEval = {
   /** JD lists acceptable languages disjunctively and candidate matches ≥1 in the full set. */
@@ -332,6 +341,87 @@ export const languageOnlyInDisjunctiveChoice = (
   return spans.some(
     (span) => spanLooksDisjunctive(span) && entry.patterns.some((re) => re.test(span)),
   );
+};
+
+const languageAppearsInConjunctiveRequirement = (
+  raw: string,
+  entry: (typeof DISJUNCTIVE_LANGUAGE_CATALOG)[number],
+): boolean => {
+  for (const line of coalesceProse(raw).split("\n")) {
+    if (!entry.patterns.some((re) => re.test(line))) continue;
+    if (ILLUSTRATIVE_EXAMPLE_FRAMING.test(line) || spanLooksDisjunctive(line)) continue;
+    const langs = languagesInSpan(line);
+    if (
+      langs.length >= 2 &&
+      /\b(must have|required|professional experience|strong (?:proficiency|fundamentals)|proficiency in)\b/i.test(
+        line,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * True when a language appears only as an example ("such as" / "e.g.") of a category,
+ * not as a closed at-least-one-of set and not as a conjunctive must-have.
+ * NYT "technologies such as Go, Node.js" and Rippling "a backend language (e.g., Python/Go)".
+ */
+export const languageIsIllustrativeExampleOnly = (
+  job: ExtractedJobData,
+  languageLabel: string,
+): boolean => {
+  const entry = DISJUNCTIVE_LANGUAGE_CATALOG.find(
+    (l) => l.label.toLowerCase() === languageLabel.toLowerCase().split("/")[0]?.trim(),
+  );
+  if (!entry) return false;
+
+  const raw = coalesceProse(jobBlob(job));
+  if (!entry.patterns.some((re) => re.test(raw))) return false;
+
+  const prose = coalesceProse(
+    [job.rawText ?? "", ...(job.requirements ?? []), ...(job.responsibilities ?? [])].join("\n"),
+  );
+  const exampleWindows = [
+    ...(prose.match(/(?:such as|e\.g\.|eg\.)[^.\n]{0,200}/gi) ?? []),
+    ...(prose.match(/\((?:e\.g\.|eg\.|such as)[^)]{3,220}\)/gi) ?? []),
+    ...(prose.match(/\ba backend language\s*\([^)]{3,220}\)/gi) ?? []),
+  ];
+  const windowIsClosedChoice = (span: string): boolean => {
+    if (CLOSED_CHOICE_FRAMING.test(span)) return true;
+    const idx = prose.indexOf(span);
+    if (idx < 0) return false;
+    return CLOSED_CHOICE_FRAMING.test(prose.slice(Math.max(0, idx - 100), idx + span.length));
+  };
+  const inExampleWindow = exampleWindows.some(
+    (span) =>
+      entry.patterns.some((re) => re.test(span)) &&
+      ILLUSTRATIVE_EXAMPLE_FRAMING.test(span) &&
+      !windowIsClosedChoice(span),
+  );
+  if (inExampleWindow) {
+    let rest = prose;
+    for (const window of exampleWindows) rest = rest.replace(window, " ");
+    if (!entry.patterns.some((re) => re.test(rest))) return true;
+  }
+
+  const spans = [
+    ...extractDisjunctiveLanguageSpans(prose),
+    ...prose.split("\n").map((l) => l.trim()).filter(Boolean),
+    ...exampleWindows,
+  ];
+  let illustrative = false;
+  for (const span of spans) {
+    if (!entry.patterns.some((re) => re.test(span))) continue;
+    if (!ILLUSTRATIVE_EXAMPLE_FRAMING.test(span)) continue;
+    if (windowIsClosedChoice(span)) continue;
+    if (languagesInSpan(span).length < 2 && !/\b(?:language|technologies|stack)\b/i.test(span)) {
+      continue;
+    }
+    illustrative = true;
+  }
+  return illustrative;
 };
 
 /** True when a requirement line uses and/or (or similar) and candidate matches ≥1 listed stack item. */

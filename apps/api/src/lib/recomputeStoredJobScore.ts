@@ -11,6 +11,7 @@ import { sanitizeExtractedTags } from "./jdTagProvenance.js";
 import { detectReferralPathway } from "./referralPathway.js";
 import { withSanitizedRuleNotes } from "./riskDisplaySanitizer.js";
 import { applyScoringClampLayer } from "./scoringClampLayer.js";
+import { sealAuthoritativeScore } from "./authoritativeScore.js";
 import { buildScoreDisplay } from "./scoreDisplayModel.js";
 import type { JobRecord } from "../types/job.js";
 import type { ResumeContextSet } from "../types/resumeContext.js";
@@ -121,7 +122,7 @@ export const recomputeStoredJobScore = (params: {
   });
 
   const llmCategories = job.score.llmCategories;
-  const scoreWithDisplay: ScoreBreakdown = scoreDisplayFinal
+  const withDisplay: ScoreBreakdown = scoreDisplayFinal
     ? {
         ...adjustedScore,
         llmCategories,
@@ -133,18 +134,22 @@ export const recomputeStoredJobScore = (params: {
         llmCategories,
         recommendationLabel: RECOMMENDATION_LABELS[finalRecommendation],
       };
+  const sealed = sealAuthoritativeScore({
+    score: withDisplay,
+    recommendation: finalRecommendation,
+  });
 
   const salaryAsk = computeSalaryAsk({
     extracted,
-    score: scoreWithDisplay,
-    recommendation: finalRecommendation,
+    score: sealed.score,
+    recommendation: sealed.recommendation,
     rules: finalRules,
   });
 
   return {
     rules: finalRules,
-    score: scoreWithDisplay,
-    recommendation: finalRecommendation,
+    score: sealed.score,
+    recommendation: sealed.recommendation,
     salaryAsk,
     referralPathwayAvailable: referralPathway.referralPathwayAvailable,
     referralPathwayNotes: referralPathway.referralPathwayNotes,

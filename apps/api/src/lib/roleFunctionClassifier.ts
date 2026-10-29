@@ -211,21 +211,47 @@ export const hasSiePrimaryResumeSignal = (job: ExtractedJobData): boolean => {
   return strongSie && !builderFirst;
 };
 
+/** Short heading lines from the JD — used when extracted title omitted "Front-End". */
+const headingTitleLines = (job: ExtractedJobData): string[] => {
+  const lines: string[] = [];
+  if (job.title?.trim()) lines.push(job.title.trim());
+  for (const raw of (job.rawText ?? "").split(/\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.length > 70 || /[.!?]/.test(line)) continue;
+    lines.push(line);
+    if (lines.length >= 8) break;
+  }
+  return lines;
+};
+
+const lineLooksFrontendTitle = (value: string, requireEngineerToken = false): boolean => {
+  const title = normalizeMatcherText(value);
+  const matched =
+    FRONTEND_TITLE_RE.test(title) ||
+    /\bsoftware engineer,\s*frontend\b/i.test(value) ||
+    /\bassociate software engineer,\s*frontend\b/i.test(value);
+  if (!matched) return false;
+  if (requireEngineerToken && !/\b(engineer|developer)\b/i.test(value)) return false;
+  return true;
+};
+
 export const classifyFrontendPrimaryRole = (
   job: ExtractedJobData,
 ): FrontendPrimaryClassification => {
   const title = normalizeMatcherText(job.title ?? "");
   const blob = jobBlob(job);
   const matcherBlob = normalizeMatcherText(blob);
+  const headings = headingTitleLines(job);
 
-  if (FULL_STACK_OR_BACKEND_TITLE_RE.test(title)) {
+  if (
+    FULL_STACK_OR_BACKEND_TITLE_RE.test(title) &&
+    !headings.some((line, index) => lineLooksFrontendTitle(line, index > 0))
+  ) {
     return { detected: false, note: "" };
   }
 
-  const titleIsFrontend =
-    FRONTEND_TITLE_RE.test(title) ||
-    /\bsoftware engineer,\s*frontend\b/i.test(job.title ?? "") ||
-    /\bassociate software engineer,\s*frontend\b/i.test(job.title ?? "");
+  const titleIsFrontend = headings.some((line, index) => lineLooksFrontendTitle(line, index > 0));
 
   if (!titleIsFrontend) {
     return { detected: false, note: "" };
@@ -237,6 +263,15 @@ export const classifyFrontendPrimaryRole = (
 
   const backendBuildingDominant =
     backendBuildHits >= 2 && backendBuildHits > consumptionHits && frontendHits < 2;
+  const titleIsExplicitFrontend = headings.some((line, index) => lineLooksFrontendTitle(line, index > 0));
+
+  // A Front-End Engineer title stays frontend unless the body has no UI work at all.
+  if (titleIsExplicitFrontend && (frontendHits >= 1 || consumptionHits >= 1 || backendBuildHits < 3)) {
+    return {
+      detected: true,
+      note: FRONTEND_PRIMARY_ROLE.FLAG,
+    };
+  }
 
   if (backendBuildingDominant) {
     return { detected: false, note: "" };

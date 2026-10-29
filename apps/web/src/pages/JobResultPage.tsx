@@ -5,7 +5,14 @@ import { RECOMMENDATION_LABELS, type JobRecord } from "../types/job";
 import { ScoreBadge } from "../components/ScoreBadge";
 import { StatusBadge } from "../components/StatusBadge";
 import { JsonPanel } from "../components/JsonPanel";
-import { hasJdSource, agencyDisclosureNote, jobHeaderLabel, salaryAskDisplay } from "../lib/jobDisplay";
+import {
+  hasJdSource,
+  agencyDisclosureNote,
+  displayedJobScore,
+  jobHeaderLabel,
+  jobScoreTitle,
+  salaryAskDisplay,
+} from "../lib/jobDisplay";
 import { extractBoardMatchPercent } from "../lib/jobBoardMatch";
 import {
   CAPABILITY_MAX_LABELS,
@@ -238,7 +245,9 @@ export const JobResultPage = () => {
               Board match {boardMatchPct}% (untrusted)
             </span>
           ) : null}
-          <ScoreBadge score={job.score.total} />
+          <span title={jobScoreTitle(job)}>
+            <ScoreBadge score={displayedJobScore(job)} />
+          </span>
           <StatusBadge status={job.status} />
         </div>
       </header>

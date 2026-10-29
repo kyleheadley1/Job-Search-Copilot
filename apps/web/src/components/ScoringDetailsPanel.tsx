@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { ScoringDetail, ScoringReport } from "../types/gmail";
+import type { ScoreRevisionView, ScoringDetail, ScoringReport } from "../types/gmail";
 import { JsonPanel } from "./JsonPanel";
 
 const CATEGORY_MAX: Record<string, number> = {
@@ -321,10 +321,184 @@ function DetailView({ detail }: { detail: ScoringDetail }) {
 
 type Source = "original" | "diagnostic";
 
-export function ScoringDetailsPanel({ appKey }: { appKey: string }) {
+function RevisionPanel({
+  report,
+  busy,
+  allowLaneChange,
+  onAllowLaneChange,
+  onPropose,
+  onApprove,
+  onRollback,
+}: {
+  report: ScoringReport;
+  busy: boolean;
+  allowLaneChange: boolean;
+  onAllowLaneChange: (value: boolean) => void;
+  onPropose: () => void;
+  onApprove: (revisionId: string) => void;
+  onRollback: (revisionId: string) => void;
+}) {
+  const history = report.scoreRevisions ?? [];
+  const approved = history.find((r) => r.status === "approved") ?? report.scoreRevision ?? null;
+  const proposedList = history.filter((r) => r.status === "proposed");
+  const latest = approved ?? proposedList[0] ?? null;
+  const originalTotal = report.fit?.originalAuthoritativeTotal ?? latest?.original.total ?? report.fit?.storedFitTotal;
+  const effectiveTotal = report.fit?.total;
+
+  return (
+    <div className="stack" style={{ gap: "0.45rem", padding: "0.65rem", border: "1px solid var(--border, #ddd)", borderRadius: 8 }}>
+      <div className="smallText">
+        <strong>Historical score revision</strong>
+        <span className="muted">
+          {" "}
+          · the stored evaluation is never overwritten. Approval re-runs the scoring engine; Claude cannot activate a
+          proposal by submitting it.
+        </span>
+      </div>
+      {report.fit?.fingerprintStale && (
+        <p className="error smallText" style={{ margin: 0 }}>
+          Approved revision {report.fit.staleRevisionTotal ?? approved?.corrected.total ?? "—"} is no longer
+          displayed because the stored evaluation changed. Showing {Math.round(effectiveTotal ?? report.fit.total)}{" "}
+          instead. Roll back to clear the inactive revision, or propose a new one against the current evaluation.
+        </p>
+      )}
+      {report.fit?.scoreRevised && approved ? (
+        <div className="smallText">
+          Effective <strong>{Math.round(approved.corrected.total)}</strong> {approved.corrected.recommendation}
+          {originalTotal != null && (
+            <span className="muted">
+              {" "}
+              · original {Math.round(originalTotal)} {approved.original.recommendation}
+            </span>
+          )}
+        </div>
+      ) : (
+        report.fit && (
+          <div className="smallText muted">
+            Effective displayed score {Math.round(effectiveTotal ?? report.fit.total)} {report.fit.recommendation}
+            {report.fit.scoreConflict && report.fit.storedFitTotal != null
+              ? ` · stored fit.total ${Math.round(report.fit.storedFitTotal)}`
+              : ""}
+          </div>
+        )
+      )}
+      {approved && <RevisionDiff revision={approved} />}
+      {proposedList.map((revision) => (
+        <RevisionDiff key={revision.revisionId} revision={revision} />
+      ))}
+      <label className="smallText" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={allowLaneChange}
+          onChange={(e) => onAllowLaneChange(e.target.checked)}
+          disabled={busy}
+        />
+        I reviewed a role-lane change (required for TELCOR-style proposals)
+      </label>
+      <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+        <button
+          className="btn-secondary"
+          disabled={busy || Boolean(approved) || proposedList.length > 0}
+          onClick={() => onPropose()}
+          title="Replays stored LLM categories with current years/seniority/stack rules. Does not call the paid scorer."
+        >
+          {busy ? "Working…" : "Propose deterministic correction"}
+        </button>
+        {proposedList.map((revision) =>
+          revision.method === "human_correction" ? null : (
+            <button
+              key={revision.revisionId}
+              className="btn-secondary"
+              disabled={busy}
+              onClick={() => onApprove(revision.revisionId)}
+              title={
+                revision.method === "claude_audit_proposal"
+                  ? "Re-runs deterministic replay before activating. Does not trust Claude's numbers."
+                  : "Activate this proposed correction as the displayed score."
+              }
+            >
+              Approve {Math.round(revision.corrected.total)} {revision.corrected.recommendation}
+              {revision.method === "claude_audit_proposal" ? " (Claude proposal)" : ""}
+            </button>
+          ),
+        )}
+        {approved && (
+          <button className="btn-secondary" disabled={busy} onClick={() => onRollback(approved.revisionId)}>
+            Roll back to original display
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const methodLabel = (method: ScoreRevisionView["method"]) => {
+  if (method === "claude_audit_proposal") return "Claude audit proposal";
+  if (method === "human_correction") return "Human correction";
+  return "Deterministic replay";
+};
+
+function RevisionDiff({ revision }: { revision: ScoreRevisionView }) {
+  const laneChange = revision.inputsChanged.includes("roleLane") || revision.correctionType === "role_lane";
+  return (
+    <div
+      className="smallText"
+      style={
+        revision.method === "claude_audit_proposal"
+          ? { padding: "0.45rem", borderLeft: "3px solid var(--accent, #4b6bfb)" }
+          : undefined
+      }
+    >
+      <div>
+        <strong>{methodLabel(revision.method)}</strong>
+        {revision.correctionType ? ` · ${revision.correctionType.replace(/_/g, " ")}` : ""}
+        {revision.confidence ? ` · ${revision.confidence} confidence` : ""}
+        {` · ${revision.status}`}: {Math.round(revision.original.total)} {revision.original.recommendation} →{" "}
+        {Math.round(revision.corrected.total)} {revision.corrected.recommendation}
+        {revision.recommendationTierChanged ? " · recommendation tier changes" : ""}
+      </div>
+      {laneChange && (
+        <p className="error smallText" style={{ margin: "0.25rem 0 0" }}>
+          Role-lane change. Approve only after explicit lane review.
+        </p>
+      )}
+      {revision.inputChanges.length > 0 && (
+        <ul>
+          {revision.inputChanges.map((change) => (
+            <li key={change.id}>
+              {change.id}: {JSON.stringify(change.from)} → {JSON.stringify(change.to)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {revision.evidence.length > 0 && (
+        <ul>
+          {revision.evidence.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+      <div>{revision.explanation}</div>
+      {revision.uncertainty && <div className="muted">Uncertainty: {revision.uncertainty}</div>}
+      {revision.createdBy?.via === "mcp" && (
+        <div className="muted">Submitted via MCP. Inactive until you approve it here.</div>
+      )}
+    </div>
+  );
+}
+
+export function ScoringDetailsPanel({
+  appKey,
+  onEffectiveScoreChange,
+}: {
+  appKey: string;
+  onEffectiveScoreChange?: () => void;
+}) {
   const [report, setReport] = useState<ScoringReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [revising, setRevising] = useState(false);
+  const [allowLaneChange, setAllowLaneChange] = useState(false);
   const [source, setSource] = useState<Source>("original");
 
   useEffect(() => {
@@ -356,6 +530,25 @@ export function ScoringDetailsPanel({ appKey }: { appKey: string }) {
     }
   };
 
+  const reloadReport = async (changedEffective: boolean) => {
+    const next = await api.gmailScoringReport(appKey);
+    setReport(next);
+    if (changedEffective) onEffectiveScoreChange?.();
+  };
+
+  const runRevision = async (action: () => Promise<unknown>, changedEffective: boolean) => {
+    setRevising(true);
+    setError(null);
+    try {
+      await action();
+      await reloadReport(changedEffective);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevising(false);
+    }
+  };
+
   if (error && !report) return <p className="error">{error}</p>;
   if (!report) return <p className="muted">Loading scoring details…</p>;
 
@@ -372,8 +565,11 @@ export function ScoringDetailsPanel({ appKey }: { appKey: string }) {
           {report.fit && (
             <span className="muted">
               {" "}
-              · scored {Math.round(report.fit.total)} on {new Date(report.fit.scoredAt).toLocaleDateString()} (
-              {report.fit.promptVersion})
+              · scored {Math.round(report.fit.total)} {report.fit.recommendation}
+              {report.fit.scoreRevised && report.fit.originalAuthoritativeTotal != null
+                ? ` (revised from ${Math.round(report.fit.originalAuthoritativeTotal)})`
+                : ""}{" "}
+              on {new Date(report.fit.scoredAt).toLocaleDateString()} ({report.fit.promptVersion})
             </span>
           )}
           {report.diagnostic && (
@@ -415,6 +611,27 @@ export function ScoringDetailsPanel({ appKey }: { appKey: string }) {
       </div>
 
       {error && <p className="error">{error}</p>}
+
+      {report.fit && (
+        <RevisionPanel
+          report={report}
+          busy={revising}
+          allowLaneChange={allowLaneChange}
+          onAllowLaneChange={setAllowLaneChange}
+          onPropose={() =>
+            void runRevision(
+              () =>
+                api.gmailProposeScoreRevision(appKey, {
+                  allowRoleLaneChange: allowLaneChange,
+                  reason: "Dashboard deterministic replay",
+                }),
+              false,
+            )
+          }
+          onApprove={(revisionId) => void runRevision(() => api.gmailApproveScoreRevision(appKey, revisionId), true)}
+          onRollback={(revisionId) => void runRevision(() => api.gmailRollbackScoreRevision(appKey, revisionId), true)}
+        />
+      )}
 
       {detail ? (
         <DetailView detail={detail} />

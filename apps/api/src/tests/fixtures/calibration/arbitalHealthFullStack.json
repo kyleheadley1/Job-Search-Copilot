@@ -1,0 +1,215 @@
+{
+  "id": "arbital-health-full-stack-calibration",
+  "anchorNote": "Arbital Health Full Stack Engineer — stored 2026-10-14 snapshot (historical 48/weak, pre-clamp LLM categories). Python is a genuine conjunctive requirement ('Strong fundamentals in TypeScript, Python, and React'); healthcare experience is a preferred plus, but the role does own healthcare-data product work. Current replay is 36/weak: 55 capability + (-6) survivability - 13 Python-backend specialization dock.",
+  "extracted": {
+    "company": "Arbital Health",
+    "title": "Full Stack Engineer",
+    "remoteType": "unknown",
+    "yearsExperience": {
+      "raw": "2-5 years",
+      "min": 2,
+      "max": 5,
+      "reinforcedLineCount": 2
+    },
+    "stack": [
+      "Python",
+      "R",
+      "SQL",
+      "Next.js",
+      "React",
+      "TypeScript",
+      "Tailwind CSS",
+      "FastAPI",
+      "Claude",
+      "Cursor",
+      "AWS",
+      "Databricks",
+      "PostgreSQL",
+      "Airflow",
+      "GitHub",
+      "Jira",
+      "Confluence"
+    ],
+    "requiredSkills": [
+      "TypeScript",
+      "Python",
+      "React",
+      "PostgreSQL",
+      "AWS"
+    ],
+    "preferredSkills": [
+      "Prior healthcare experience is a plus",
+      "Startup experience is a plus"
+    ],
+    "domainTags": [
+      "healthcare",
+      "actuarial",
+      "value-based care",
+      "financial",
+      "data"
+    ],
+    "visaRequirement": "Applicants must be legally authorized to work in the United States for the duration of their employment; this position is not eligible for employer-sponsored immigration sponsorship, now or in the future.",
+    "responsibilities": [
+      "Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny",
+      "Build customer-facing and internal interfaces in our Next.js and React application — the product our customers use to design and monitor the performance of their value-based care contracts",
+      "Design and implement the API routes that power those features, working with high volumes of complex healthcare data",
+      "Work closely with our Product, Design, and actuarial science teams to bring their models and designs to life in the product",
+      "Write tests, review teammates’ code, and help keep the codebase something the team is glad to work in",
+      "The opportunity to build a critical software platform that accelerates the American healthcare system's transition to value-based care",
+      "This position is not eligible for employer-sponsored immigration sponsorship, now or in the future. • Applicants must be able to work in the United States without requiring employer sponsorship."
+    ],
+    "requirements": [
+      "2-5 years of professional full-stack development experience",
+      "A track record of shipping features to production that real users depend on",
+      "Strong fundamentals in TypeScript, Python, and React — you understand component design, state, and rendering behavior, not just the syntax",
+      "Able to work entrepreneurially: self-motivated, ambitious, and comfortable in a rapidly changing, ambiguous start-up environment",
+      "Occasional travel required - Quarterly team offsites",
+      "•  Applicants must be legally authorized to work in the United States for the duration of their employment.",
+      "• This position is not eligible for employer-sponsored immigration sponsorship, now or in the future. • Applicants must be able to work in the United States without requiring employer sponsorship."
+    ],
+    "listingCompanyName": "Arbital Health",
+    "employerCompanyName": null,
+    "agencyCompanyName": null,
+    "companyDisplayName": "Arbital Health",
+    "companyConfidence": "direct_or_unclear",
+    "companyExtractionNotes": [],
+    "skillTags": [
+      {
+        "term": "Python",
+        "sourceQuote": "● Strong fundamentals in TypeScript, Python, and React — you understand component design, state, and rendering behavior, not just the syntax",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "R",
+        "sourceQuote": "● Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "SQL",
+        "sourceQuote": "● Python, R, SQL, Next.js, React, TypeScript, Tailwind CSS, FastAPI",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Next.js",
+        "sourceQuote": "● Build customer-facing and internal interfaces in our Next.js and React application — the product our customers use to design and monitor the performance of their value-based care contracts",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "React",
+        "sourceQuote": "● Build customer-facing and internal interfaces in our Next.js and React application — the product our customers use to design and monitor the performance of their value-based care contracts",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "TypeScript",
+        "sourceQuote": "● Strong fundamentals in TypeScript, Python, and React — you understand component design, state, and rendering behavior, not just the syntax",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Tailwind CSS",
+        "sourceQuote": "● Python, R, SQL, Next.js, React, TypeScript, Tailwind CSS, FastAPI",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "FastAPI",
+        "sourceQuote": "● Python, R, SQL, Next.js, React, TypeScript, Tailwind CSS, FastAPI",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Claude",
+        "sourceQuote": "● Claude, Cursor",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Cursor",
+        "sourceQuote": "● Claude, Cursor",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "AWS",
+        "sourceQuote": "● Infrastructure: AWS, Databricks, PostgreSQL, Airflow",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Databricks",
+        "sourceQuote": "● Infrastructure: AWS, Databricks, PostgreSQL, Airflow",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "PostgreSQL",
+        "sourceQuote": "● Infrastructure: AWS, Databricks, PostgreSQL, Airflow",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Airflow",
+        "sourceQuote": "● Infrastructure: AWS, Databricks, PostgreSQL, Airflow",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "GitHub",
+        "sourceQuote": "● Version Control: GitHub",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Jira",
+        "sourceQuote": "● Team Planning: Jira, Confluence",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Confluence",
+        "sourceQuote": "● Team Planning: Jira, Confluence",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Prior healthcare experience is a plus",
+        "sourceQuote": "● Prior healthcare experience is a plus",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "Startup experience is a plus",
+        "sourceQuote": "● Startup experience is a plus",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "healthcare",
+        "sourceQuote": "● Design and implement the API routes that power those features, working with high volumes of complex healthcare data",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "actuarial",
+        "sourceQuote": "● Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "value-based care",
+        "sourceQuote": "● Build customer-facing and internal interfaces in our Next.js and React application — the product our customers use to design and monitor the performance of their value-based care contracts",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "financial",
+        "sourceQuote": "● Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny",
+        "strength": "REQUIRED"
+      },
+      {
+        "term": "data",
+        "sourceQuote": "● Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny",
+        "strength": "REQUIRED"
+      }
+    ],
+    "geoScope": {
+      "titleRegion": null,
+      "postingLocation": null,
+      "cardLocation": null,
+      "remoteType": "unknown"
+    },
+    "rawText": "Full Stack Engineer\n\nArbital Health is a rapidly growing healthcare technology and actuarial leader that centralizes, measures, and adjudicates value-based care contracts at scale.  We enable payers and providers to design, measure, and execute value-based agreements with greater transparency, efficiency, and financial predictability.\nWe invest in hiring high potential and humble individuals who thrive in fast-paced environments and can rapidly grow their responsibilities as we continue to accelerate our growth.\n \nWe were co-founded by Brian Overstreet and Travis May (founder & former CEO of LiveRamp and Datavant, the two biggest data companies of the last 20 years), and are backed by Transformation Capital, Valtruis and other leading investors. In our first 2 years, Arbital Health has established itself as a trusted partner for over 40 payers, providers, and other stakeholders looking to navigate the complexities of risk-based contracting.\n\n\nWe are looking for a Full Stack Engineer that will work across our product stack — from React components to API routes to the SQL queries behind them — owning features end to end, from design through production. You'll work in an AI-native environment -- fluency with AI coding tools isn't just a nice-to-have; it's how we ship fast without sacrificing quality. You will have real ownership early: you will be trusted to take a well-scoped problem and run with it.  This is a strong fit if you care about the craft of building interfaces people actually enjoy using, and you want to go deep on a genuinely hard problem space: making complex healthcare and financial data legible. If you thrive in a fast-paced environment and communicate clearly with both engineers and other internal teams, this is the perfect opportunity for you!\n\n\nWhat you'll do:\n● Turn dense actuarial and financial output into interfaces that are clear at a glance, including data tables, charts, and exports that hold up under real-world data volumes and actuarial scrutiny\n● Build customer-facing and internal interfaces in our Next.js and React application — the product our customers use to design and monitor the performance of their value-based care contracts\n● Design and implement the API routes that power those features, working with high volumes of complex healthcare data\n● Work closely with our Product, Design, and actuarial science teams to bring their models and designs to life in the product\n● Write tests, review teammates’ code, and help keep the codebase something the team is glad to work in\n\nWhat you bring:\n● 2-5 years of professional full-stack development experience\n● A track record of shipping features to production that real users depend on\n● Strong fundamentals in TypeScript, Python, and React — you understand component design, state, and rendering behavior, not just the syntax\n● Able to work entrepreneurially: self-motivated, ambitious, and comfortable in a rapidly changing, ambiguous start-up environment\n● Prior healthcare experience is a plus\n● Startup experience is a plus\n\nTools we use:\n● Python, R, SQL, Next.js, React, TypeScript, Tailwind CSS, FastAPI\n● Claude, Cursor\n● Infrastructure: AWS, Databricks, PostgreSQL, Airflow\n● Version Control: GitHub\n● Team Planning: Jira, Confluence\n\nWhy Join Us?\nWe are assembling a team of creative, talented visionaries seeking to build a new technology that will change healthcare. You will be able to learn, build, and scale our team and technology in a collaborative, creative culture that values every team member.\n \nWe Offer:\n•  Generous equity grants of ISO stock options\n•  We offer an exceptional benefits package with high employer-paid contributions for health, dental, and vision insurance\n•  4% 401(k) match\n•  Flexible PTO, a weeklong winter shutdown, and 10 holidays each year\n•  Occasional travel required - Quarterly team offsites\n•  The opportunity to build a critical software platform that accelerates the American healthcare system's transition to value-based care\n \nWork Authorization\n•  Applicants must be legally authorized to work in the United States for the duration of their employment.\n• This position is not eligible for employer-sponsored immigration sponsorship, now or in the future. • Applicants must be able to work in the United States without requiring employer sponsorship."
+  },
+  "storedCategoryScores": {
+    "stackFit": 9,
+    "levelFit": 15,
+    "domainFit": 3,
+    "resumeStoryClarity": 9,
+    "functionalOverlap": 10,
+    "recruiterFriendliness": 12,
+    "careerValue": 7
+  }
+}

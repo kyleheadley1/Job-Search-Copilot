@@ -19,6 +19,7 @@ import { toInsightsView, toListRow } from "../../mcp/views.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../../services/gmail/jdRecovery/evaluations.repository.js";
 import type { InsightsRun } from "../../services/insights/insights.repository.js";
+import { exampleUserProfile } from "../../config/userProfile.example.js";
 
 const interval = { rate: 0.25, lo: 0.1, hi: 0.4 };
 
@@ -176,12 +177,22 @@ const deps = (): McpDeps => ({
     if (keys.includes(evaluation.key)) map.set(evaluation.key, evaluation);
     return map;
   }),
+  getActiveScoreRevisions: vi.fn(async () => new Map()),
   getLatestInsightsRun: vi.fn(async () => insightsRun),
+  getUserProfile: vi.fn(() => {
+    throw new Error("getUserProfile should not run in compact read-tool tests");
+  }),
+  getResumeContexts: vi.fn(async () => {
+    throw new Error("getResumeContexts should not run in compact read-tool tests");
+  }),
   saveJobProspect: vi.fn(async () => {
     throw new Error("saveJobProspect should not run in read-tool tests");
   }),
   submitJdCandidate: vi.fn(async () => {
     throw new Error("submitJdCandidate should not run in read-tool tests");
+  }),
+  proposeScoringCorrection: vi.fn(async () => {
+    throw new Error("proposeScoringCorrection should not run in read-tool tests");
   }),
 });
 
@@ -196,6 +207,9 @@ describe("MCP tool discovery", () => {
       "save_job_prospect",
       "list_missing_job_descriptions",
       "submit_jd_candidate",
+      "list_scored_applications_for_audit",
+      "get_scoring_audit_context",
+      "propose_scoring_correction",
     ]);
     const server = createMcpServer(deps());
     for (const name of MCP_TOOL_NAMES) {
@@ -369,6 +383,14 @@ describe("MCP evaluation provenance", () => {
       "matchSignals",
       "jdTitle",
       "fitBreakdown",
+      "storedFitTotal",
+      "scoreConflict",
+      "authoritativeSource",
+      "revisionId",
+      "scoreRevised",
+      "originalAuthoritativeTotal",
+      "fingerprintStale",
+      "staleRevisionTotal",
     ]);
     for (const field of Object.keys(result.evaluation)) {
       expect(allowed.has(field)).toBe(true);
@@ -415,7 +437,8 @@ describe("MCP authorization and PII boundaries", () => {
     const details = json(await runMcpTool("get_application_details", { key: "acme:engineer" }, d));
     const insights = json(await runMcpTool("get_application_insights", {}, d));
     const missing = json(await runMcpTool("list_missing_job_descriptions", {}, d));
-    const blob = `${listed}\n${details}\n${insights}\n${missing}`;
+    const scored = json(await runMcpTool("list_scored_applications_for_audit", {}, d));
+    const blob = `${listed}\n${details}\n${insights}\n${missing}\n${scored}`;
     for (const secret of [
       "secret@example.com",
       "refresh-secret",
@@ -493,11 +516,13 @@ const FULL_JD = [
   "Beta",
   "",
   "Responsibilities",
-  "- Ship product features",
-  "- Work with customers",
+  "- Ship product features used by customer teams in production",
+  "- Work with customers to understand problems and choose a useful first step",
+  "- Write tested TypeScript services and review code with the team",
   "",
   "Requirements",
-  "- 3+ years of software engineering",
+  "- 3+ years of software engineering experience",
+  "- Familiarity with TypeScript and a frontend framework such as React",
   "Build TypeScript services and React interfaces for our healthcare platform. ".repeat(8),
 ].join("\n");
 
@@ -515,9 +540,19 @@ describe("MCP Phase 2 missing JD tools", () => {
         }
         return map;
       }),
+      getActiveScoreRevisions: vi.fn(async () => new Map()),
       getLatestInsightsRun: vi.fn(async () => insightsRun),
+      getUserProfile: vi.fn(() => {
+        throw new Error("getUserProfile should not run in Phase 2 tests");
+      }),
+      getResumeContexts: vi.fn(async () => {
+        throw new Error("getResumeContexts should not run in Phase 2 tests");
+      }),
       saveJobProspect: vi.fn(async () => {
         throw new Error("saveJobProspect should not run in Phase 2 tests");
+      }),
+      proposeScoringCorrection: vi.fn(async () => {
+        throw new Error("proposeScoringCorrection should not run in Phase 2 tests");
       }),
       submitJdCandidate: (input) =>
         submitJdCandidate(input, {
@@ -605,5 +640,83 @@ describe("MCP Phase 2 missing JD tools", () => {
       completeness: "full",
     });
     expect(json(listed)).not.toContain("Build TypeScript services");
+  });
+});
+
+describe("MCP Phase 3A scoring audit tools", () => {
+  const auditDeps = (): McpDeps => {
+    const d = deps();
+    d.getUserProfile = vi.fn(() => exampleUserProfile);
+    d.getResumeContexts = vi.fn(async () => ({
+      BASE: {
+        type: "BASE",
+        sourcePath: "/secret/home/base_resume.txt",
+        sourceKind: "txt",
+        loadedAt: "2026-10-02T00:00:00.000Z",
+        rawText: "TypeScript Node.js React AWS.",
+        metadata: {
+          strongestThemes: ["TypeScript"],
+          projectEvidence: [],
+          keywords: ["typescript"],
+          bestFitRoleShapes: ["product_fullstack"],
+          avoidUseCases: [],
+          claimSupport: [],
+        },
+      },
+    }));
+    return d;
+  };
+
+  it("lists scored applications with audit metadata and no JD body", async () => {
+    const result = JSON.parse(json(await runMcpTool("list_scored_applications_for_audit", { limit: 20 }, auditDeps()))) as {
+      readOnly: boolean;
+      totalMatched: number;
+      applications: Array<Record<string, unknown>>;
+      scoringModel: { formula: string };
+      auditProtocol: { readOnly: boolean };
+    };
+    expect(result.readOnly).toBe(true);
+    expect(result.totalMatched).toBe(1);
+    expect(result.applications[0]).toMatchObject({
+      applicationKey: "acme:engineer",
+      fitTotal: 72,
+      recommendation: "apply",
+      recommendedResume: "BASE",
+    });
+    expect(result.scoringModel.formula).toMatch(/capability/);
+    expect(result.auditProtocol.readOnly).toBe(true);
+    expect(json(result)).not.toContain("FULL JOB DESCRIPTION SECRET");
+    expect(json(result)).not.toContain("secret@example.com");
+  });
+
+  it("returns a stored scoring packet without rescoring or leaking credentials", async () => {
+    const d = auditDeps();
+    const packet = JSON.parse(json(await runMcpTool("get_scoring_audit_context", { key: "acme:engineer" }, d))) as {
+      readOnly: boolean;
+      jobDescription: { text?: string };
+      scoring: { evidenceGaps: string[]; total: number };
+      candidate: { profile: { headline: string } };
+    };
+    expect(packet.readOnly).toBe(true);
+    expect(packet.scoring.total).toBe(72);
+    expect(packet.jobDescription.text).toContain("FULL JOB DESCRIPTION SECRET");
+    expect(packet.candidate.profile.headline).toBe(exampleUserProfile.headline);
+    expect(packet.scoring.evidenceGaps).toContain("profileNotSnapshottedAtScoring");
+    expect(json(packet)).not.toContain("refresh-secret");
+    expect(json(packet)).not.toContain("secret@example.com");
+    expect(json(packet)).not.toContain("/secret/home");
+    expect(d.getUserProfile).toHaveBeenCalled();
+  });
+
+  it("rejects an unscored key and extra identity fields", async () => {
+    await expect(runMcpTool("get_scoring_audit_context", { key: "beta:pm" }, auditDeps())).rejects.toMatchObject({
+      code: "NOT_SCORED",
+    });
+    await expect(
+      runMcpTool("get_scoring_audit_context", { key: "acme:engineer", userId: "x" }, auditDeps()),
+    ).rejects.toBeInstanceOf(ZodError);
+    await expect(
+      runMcpTool("list_scored_applications_for_audit", { userId: "x" }, auditDeps()),
+    ).rejects.toBeInstanceOf(ZodError);
   });
 });
