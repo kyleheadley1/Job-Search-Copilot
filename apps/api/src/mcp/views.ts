@@ -83,6 +83,9 @@ const evaluationView = (evaluation: ApplicationEvaluation) => ({
   recommendation: evaluation.fit?.recommendation,
   recommendedResume: evaluation.fit?.recommendedResume,
   matchLevel: evaluation.recovery.match?.level,
+  // Provenance only: stage label and short fixed-vocabulary signal codes. Never attempts, candidates, notes, or URLs.
+  foundVia: evaluation.recovery.foundVia,
+  matchSignals: evaluation.recovery.match?.signals ? [...evaluation.recovery.match.signals] : undefined,
   jdTitle: roleFromEvaluation(evaluation) ?? undefined,
   fitBreakdown: evaluation.fit?.breakdown ? fitBreakdownView(evaluation.fit.breakdown) : undefined,
 });

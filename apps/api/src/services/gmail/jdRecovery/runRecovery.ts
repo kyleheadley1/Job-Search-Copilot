@@ -278,6 +278,23 @@ const MATCH_ORDER = { exact: 3, high: 2, low: 1, none: 0 } as const;
 const better = (a: Candidate | undefined, b: Candidate): Candidate =>
   !a || MATCH_ORDER[b.match.level] > MATCH_ORDER[a.match.level] ? b : a;
 
+/** Keep MCP submissions across a later recovery rebuild; never let Serper/email wipe them. */
+const mergeStoredCandidates = (
+  found: Map<string, RecoveryCandidate>,
+  existing: ApplicationEvaluation | null,
+): RecoveryCandidate[] => {
+  for (const candidate of existing?.recovery.candidates ?? []) {
+    if (candidate.source !== "mcp") continue;
+    const key = candidate.url ?? `mcp:${computeJdTextHash(candidate.text)}`;
+    if (!found.has(key)) found.set(key, candidate);
+  }
+  const submitted = [...found.values()].filter((c) => c.source === "mcp");
+  const rest = [...found.values()]
+    .filter((c) => c.source !== "mcp")
+    .sort((x, y) => MATCH_ORDER[y.matchLevel] - MATCH_ORDER[x.matchLevel]);
+  return [...submitted, ...rest].slice(0, MAX_STORED_CANDIDATES);
+};
+
 export const needsRecovery = (
   existing: ApplicationEvaluation | undefined,
   now = Date.now(),
@@ -709,9 +726,7 @@ export const recoverApplication = async (
       notes: sortedNotes,
       verifiedBy: "auto",
       recoveredRole,
-      candidates: [...candidates.values()]
-        .sort((x, y) => MATCH_ORDER[y.matchLevel] - MATCH_ORDER[x.matchLevel])
-        .slice(0, MAX_STORED_CANDIDATES),
+      candidates: mergeStoredCandidates(candidates, existing),
       boardChecks: boardChecks.length ? boardChecks : undefined,
     },
     outcome: buildOutcome(app),
@@ -722,7 +737,8 @@ export const recoverApplication = async (
   const chosen = best as Candidate | undefined;
   if (!chosen) {
     const failedOnly = fetchErrors > 0 && !notes.has("serper_cap_reached");
-    base.recovery.status = failedOnly ? "fetch_failed" : "not_found";
+    const hasMcp = (base.recovery.candidates ?? []).some((c) => c.source === "mcp");
+    base.recovery.status = hasMcp ? "unverified" : failedOnly ? "fetch_failed" : "not_found";
     base.recovery.reason =
       sortedNotes[0] ?? (evidence.jobLinks.length || evidence.inlineJd ? "no_usable_posting" : "no_email_evidence");
     return { evaluation: base, triaged: false };
@@ -772,6 +788,13 @@ export class AlreadyScoredError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AlreadyScoredError";
+  }
+}
+
+export class IncompleteJdError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IncompleteJdError";
   }
 }
 
@@ -839,6 +862,9 @@ export const confirmCandidate = async (key: string, identifier: string): Promise
     (c) => c.url === identifier || c.prospectId === identifier,
   );
   if (!candidate) throw new EvaluationNotFoundError(`No candidate ${identifier} for ${key}`);
+  if (candidate.completeness === "partial") {
+    throw new IncompleteJdError(`Candidate ${identifier} is a partial JD and is not eligible to score`);
+  }
   const scored = await scoreUserPosting(
     evaluation,
     {
@@ -991,11 +1017,79 @@ export type RecoveryRunState = {
   processed: number;
   scored: number;
   error?: string;
+  /** Company-scoped or unscoped runs requested while `running` was true, not yet started. */
+  deferred: number;
 };
 
-const state: RecoveryRunState = { running: false, processed: 0, scored: 0 };
+/** Optional filter. Gmail/API full recovery omits this; prospect saves pass the company key. */
+export type RecoveryRunOptions = { companyKey?: string };
 
-export const getRecoveryRunState = (): RecoveryRunState => ({ ...state });
+const state: RecoveryRunState = { running: false, processed: 0, scored: 0, deferred: 0 };
+
+const deferredByCompany = new Map<string, number>();
+let deferredUnscopedDays: number | null = null;
+
+const normalizeScopeKey = (companyKey?: string): string | undefined => {
+  const key = companyKey?.trim();
+  return key || undefined;
+};
+
+const applicationsInScope = (apps: GmailApplication[], companyKey?: string): GmailApplication[] => {
+  const key = normalizeScopeKey(companyKey);
+  return key ? apps.filter((app) => normalizeCompany(app.company) === key) : apps;
+};
+
+const prospectsInScope = (prospects: JobProspect[], companyKey?: string): JobProspect[] => {
+  const key = normalizeScopeKey(companyKey);
+  return key ? prospects.filter((prospect) => prospect.companyKey === key) : prospects;
+};
+
+const deferredCount = (): number => (deferredUnscopedDays != null ? 1 : 0) + deferredByCompany.size;
+
+const rememberDeferred = (days: number, companyKey?: string): void => {
+  const key = normalizeScopeKey(companyKey);
+  if (!key) {
+    deferredUnscopedDays = Math.max(deferredUnscopedDays ?? 0, days);
+    deferredByCompany.clear();
+    return;
+  }
+  if (deferredUnscopedDays != null && deferredUnscopedDays >= days) return;
+  deferredByCompany.set(key, Math.max(deferredByCompany.get(key) ?? 0, days));
+};
+
+const takeDeferred = (): { days: number; companyKey?: string } | undefined => {
+  if (deferredUnscopedDays != null) {
+    const days = deferredUnscopedDays;
+    deferredUnscopedDays = null;
+    deferredByCompany.clear();
+    return { days };
+  }
+  const next = deferredByCompany.entries().next();
+  if (next.done) return undefined;
+  deferredByCompany.delete(next.value[0]);
+  return { days: next.value[1], companyKey: next.value[0] };
+};
+
+const syncDeferredCount = (): void => {
+  state.deferred = deferredCount();
+};
+
+export const getRecoveryRunState = (): RecoveryRunState => ({ ...state, deferred: deferredCount() });
+
+/** Test-only: drop in-flight flags so unit tests do not leak a run into the next case. */
+export const resetRecoveryRunStateForTests = (): void => {
+  Object.assign(state, {
+    running: false,
+    startedAt: undefined,
+    finishedAt: undefined,
+    processed: 0,
+    scored: 0,
+    error: undefined,
+    deferred: 0,
+  });
+  deferredByCompany.clear();
+  deferredUnscopedDays = null;
+};
 
 const newestFirst = (apps: GmailApplication[]) => [...apps].sort((a, b) => b.appliedAt.localeCompare(a.appliedAt));
 
@@ -1040,15 +1134,17 @@ export const pendingApplications = (
 /** Room for at least one more job's worth of Serper queries. */
 const hasSerperBudget = (usage: SerperUsage) => usage.queries + MAX_SERPER_QUERIES_PER_JOB <= usage.cap;
 
-/** One pass over the window, newest applications first. */
+/** One pass over the window, newest applications first. `companyKey` limits the worker, not just the count. */
 export const runRecovery = async (
   days: number,
   maxPerRun = env.jdRecoveryMaxPerRun,
+  opts?: RecoveryRunOptions,
 ): Promise<{ processed: number; scored: number }> => {
-  const apps = await getGmailApplications(days);
+  const companyKey = normalizeScopeKey(opts?.companyKey);
+  const apps = applicationsInScope(await getGmailApplications(days), companyKey);
   const existing = await loadEvaluations(apps);
   const usage = await serperUsageRepository.get();
-  const openProspects = await jobProspectsRepository.findOpen();
+  const openProspects = prospectsInScope(await jobProspectsRepository.findOpen(), companyKey);
   const todo = pendingApplications(apps, existing, hasSerperBudget(usage), openProspects).slice(
     0,
     maxPerRun * MAX_PROCESSED_PER_RUN_FACTOR,
@@ -1071,14 +1167,32 @@ export const runRecovery = async (
   return { processed, scored };
 };
 
-/** Start a background run unless one is active. */
-export const startRecoveryRun = async (days: number): Promise<{ queued: number; running: boolean; started: boolean }> => {
-  const apps = await getGmailApplications(days);
+const drainDeferred = (): void => {
+  if (state.running) return;
+  const next = takeDeferred();
+  syncDeferredCount();
+  if (!next) return;
+  void startRecoveryRun(next.days, next.companyKey ? { companyKey: next.companyKey } : undefined).then((result) => {
+    if (!result.started) drainDeferred();
+  });
+};
+
+/** Start a background run unless one is active. A busy process remembers the request and runs it next. */
+export const startRecoveryRun = async (
+  days: number,
+  opts?: RecoveryRunOptions,
+): Promise<{ queued: number; running: boolean; started: boolean }> => {
+  const companyKey = normalizeScopeKey(opts?.companyKey);
+  const apps = applicationsInScope(await getGmailApplications(days), companyKey);
   const existing = await loadEvaluations(apps);
   const usage = await serperUsageRepository.get();
-  const openProspects = await jobProspectsRepository.findOpen();
+  const openProspects = prospectsInScope(await jobProspectsRepository.findOpen(), companyKey);
   const queued = pendingApplications(apps, existing, hasSerperBudget(usage), openProspects).length;
-  if (state.running) return { queued, running: true, started: false };
+  if (state.running) {
+    rememberDeferred(days, companyKey);
+    syncDeferredCount();
+    return { queued, running: true, started: false };
+  }
   if (queued === 0) return { queued, running: false, started: false };
 
   Object.assign(state, {
@@ -1088,16 +1202,18 @@ export const startRecoveryRun = async (days: number): Promise<{ queued: number; 
     processed: 0,
     scored: 0,
     error: undefined,
+    deferred: deferredCount(),
   });
-  void runRecovery(days)
-    .then((r) => logger.info("JD recovery run complete", { days, ...r }))
+  void runRecovery(days, env.jdRecoveryMaxPerRun, companyKey ? { companyKey } : undefined)
+    .then((r) => logger.info("JD recovery run complete", { days, companyKey, ...r }))
     .catch((error) => {
       state.error = error instanceof Error ? error.message : String(error);
-      logger.error("JD recovery run failed", { message: state.error });
+      logger.error("JD recovery run failed", { message: state.error, companyKey });
     })
     .finally(() => {
       state.running = false;
       state.finishedAt = new Date().toISOString();
+      drainDeferred();
     });
   return { queued, running: true, started: true };
 };

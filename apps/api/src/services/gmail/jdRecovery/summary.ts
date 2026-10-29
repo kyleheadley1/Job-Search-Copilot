@@ -16,6 +16,10 @@ export type EvaluationSummary = {
     location?: string;
     matchLevel: MatchLevel;
     source: string;
+    completeness?: "full" | "partial";
+    sourceType?: "company_site" | "ats" | "aggregator" | "other";
+    retrievedAt?: string;
+    matchEvidence?: string[];
   }>;
   verifiedBy?: "auto" | "user";
   jdTitle?: string;
@@ -43,7 +47,7 @@ export const toEvaluationSummary = (e: ApplicationEvaluation): EvaluationSummary
   reason: e.recovery.reason,
   notes: e.recovery.notes,
   attempts: e.recovery.attempts.slice(0, 10),
-  candidates: e.recovery.candidates?.map(({ text: _text, company: _company, ...c }) => c),
+  candidates: e.recovery.candidates?.map(({ text: _text, rawText: _rawText, company: _company, ...c }) => c),
   verifiedBy: e.recovery.verifiedBy,
   jdTitle: roleFromEvaluation(e) ?? undefined,
   recoveredRole: e.recovery.recoveredRole,

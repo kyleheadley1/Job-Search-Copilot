@@ -23,22 +23,29 @@ describe("buildRecoveryMetrics", () => {
           serperQueries: 1,
           candidates: [{ url: "u", source: "ats_board", matchLevel: "low", text: "" }],
         }),
+        ev({
+          status: "unverified",
+          source: "mcp",
+          foundVia: "mcp",
+          candidates: [{ url: "m", source: "mcp", stage: "mcp", matchLevel: "low", text: "" }],
+        }),
         ev({ status: "not_found", serperQueries: 1, notes: ["serper_no_results"] }),
         ev({ status: "fetch_failed" }),
       ],
       { queries: 25, cap: 1250 },
     );
     expect(m).toMatchObject({
-      applications: 7,
-      withUsefulData: 5,
+      applications: 8,
+      withUsefulData: 6,
       verifiedAuto: 3,
       userPasted: 1,
-      needsPick: 1,
+      needsPick: 2,
       notFound: 2,
     });
     expect(m.byBucket.company_board).toEqual({ verified: 2, candidatesOnly: 0 });
     expect(m.byBucket.serper).toEqual({ verified: 1, candidatesOnly: 1 });
     expect(m.byBucket.manual.verified).toBe(1);
+    expect(m.byBucket.manual.candidatesOnly).toBe(1);
     expect(m.serper).toMatchObject({ jobsSearched: 3, jobsWithResults: 2, verified: 1, candidatesOnly: 1, queriesUsed: 25 });
   });
 });

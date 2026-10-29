@@ -52,10 +52,11 @@ It is designed as an operator assistant, not an autonomous applier.
 
 For each application, the app tries to find the original posting, verifies it is the same job, and only then scores it. The scorer sees only the JD text and a company hint, never the emails or the outcome. Steps, cheapest first, stopping at the first verified match:
 
-1. The email itself: an inline JD, or posting links (Greenhouse, Lever, Ashby, Workday, LinkedIn guest pages, JSON-LD)
-2. Company job boards named in the emails (sender domains, Workday tenant links, Greenhouse embeds)
-3. Guessed board slugs on the free public APIs: Greenhouse, Lever, Ashby, SmartRecruiters, Workable (cached per company)
-4. Serper web search, only when no company board was found, within a lifetime query budget
+1. A saved prospect (MCP Phase 1): a unique, specific company and role can auto-attach without a URL or requisition ID when seniority and other known identity fields agree and no competing prospect exists. Generic titles, role-less Gmail applications, seniority conflicts, and multiple candidates go to review. `confirmCandidate` accepts a `prospectId` and does not invent URLs
+2. The email itself: an inline JD, or posting links (Greenhouse, Lever, Ashby, Workday, LinkedIn guest pages, JSON-LD)
+3. Company job boards named in the emails (sender domains, Workday tenant links, Greenhouse embeds)
+4. Guessed board slugs on the free public APIs: Greenhouse, Lever, Ashby, SmartRecruiters, Workable (cached per company)
+5. Serper web search, only when no company board was found, within a lifetime query budget
 
 Verification rules:
 
@@ -92,9 +93,9 @@ Two features act on your behalf, both built so that the model only reads and sug
 - Every paid feature has a hard monthly cap, spread evenly over the days left in the month: Top Jobs $2, Next steps agent $1.50, chat assistant $1.50, insights summary $0.30. When a day's share is used up, the feature falls back to free rules or says so without calling the model
 - The cost card shows this month's spend per feature against its cap
 
-**MCP (Cursor)**
+**MCP Phase 1–2 (Cursor)**
 
-- A local stdio MCP server lets Cursor (or another MCP client) call three read tools plus `save_job_prospect` against the same Mongo the dashboard uses. Saving a prospect does not create an application, write the tracker, or score. See section F.
+- A local stdio MCP server lets Cursor (or another MCP client) read compact application rows and the stored insights run, save a pasted JD as a prospect, and submit a web-retrieved posting as a **review candidate** for an existing application that still needs a JD. Prospects live in `job_prospects` until Gmail recovery matches them. Phase 2 candidates live on the existing evaluation (`recovery.candidates`) and never score until you confirm the match in the dashboard. See section F.
 
 **Application insights (dashboard card)**
 
@@ -151,14 +152,14 @@ Gmail dashboard:
 
 - `apps/api/` - Express API, scoring/rules/orchestration, Gmail sync and JD recovery, import/verify scripts
   - `src/services/gmail/` - OAuth, sync, prefilter/classifier, application grouping
-  - `src/services/gmail/jdRecovery/` - email evidence, ATS board APIs, posting fetchers, matching, Serper, metrics
+  - `src/services/gmail/jdRecovery/` - email evidence, ATS board APIs, posting fetchers, matching, Serper, metrics, saved prospects (`job_prospects`)
   - `src/services/llm/` - OpenAI Responses client (structured calls and the tool-calling loop), usage/cost tracking, per-feature monthly budgets
   - `src/services/agent/` - daily Next steps agent (rule-based candidates, one budgeted LLM pass, suggestions store)
   - `src/services/assistant/` - chat assistant (tools, proposal cards, thread storage)
   - `src/services/proposals/` - the only code paths that apply approved actions (tracker status, Gmail draft)
   - `src/services/topJobs/` - alert parsing, pre-screen, location/open checks, budgeted scoring
   - `src/services/insights/` - callback statistics, coverage and seniority tables, weekly summary
-  - `src/mcp/` - MCP server (stdio): tool catalog, compact views, Cursor launch entry
+  - `src/mcp/` - MCP server (stdio): read tools, `save_job_prospect`, missing-JD list, `submit_jd_candidate`, compact views, Cursor launch entry
 - `apps/web/` - React + Vite frontend (Dashboard, Add Job, Top Jobs, Tracker)
 - `apps/extension/` - Chrome MV3 side-panel extension (React + Vite)
 - `scripts/` - root helper scripts (eval/regression utilities)
@@ -211,31 +212,52 @@ Optional, by feature:
 
 Scripts run with `tsx`. If `npx tsx` is blocked in your environment, use `node --import tsx <file>`.
 
-### Optional: MCP for Cursor (initial version)
+### Optional: MCP for Cursor (Phase 1–2)
 
-This is a **local** MCP server so Cursor can ask about the search and save a pasted JD as a prospect, without a second copy of the product logic. MCP here is a transport (how Cursor talks to the existing API services), not a new scoring feature.
+The MCP server is **local** stdio so Cursor can ask about the search, save a pasted JD as a prospect, and submit a retrieved posting for an existing application that still needs a JD — without a second copy of the product logic. MCP here is a transport (how Cursor talks to the existing API services). An end-to-end live test confirmed a saved prospect can auto-attach and produce a frozen fit score, with `foundVia: "prospect"` and `matchSignals: ["prospect_auto_attached"]`.
 
 **Why this shape**
 
 - Start with a server Cursor can call, not an in-app MCP client. The web Ask assistant already has its own tools; duplicating that as an MCP client was out of scope.
-- Reuse `getGmailApplications`, stored evaluations, and the latest insights run. Do not query Gmail live, do not re-run insights, and do not invent a second database layer.
-- Keep the write surface to one prospect-save tool. A Cursor chat cannot mutate the tracker, create drafts, sync mail, or score a role from MCP.
+- Reuse `getGmailApplications`, stored evaluations, insights, and the existing JD recovery / scoring pipeline. Do not query Gmail live from MCP, do not re-run insights, and do not invent a second database layer.
+- Keep the write surface small. A Cursor chat cannot mutate the tracker directly, create drafts, or sync mail. `save_job_prospect` does not score by itself; a later company-scoped recovery run can. `submit_jd_candidate` never scores; it only queues a candidate for dashboard review.
 - Return explicit field allowlists (compact rows, not Mongo documents with secrets stripped). That keeps email bodies, sender addresses, full JDs, and credentials off the read tools.
 - Trust model is the same as `npm run dev`: Cursor launches the process as the OS user, which loads the root `.env` and `MONGO_URI` / `MONGO_DB_NAME`. There is no extra login.
 
-**What it can do today**
+**What Phase 1 can do**
 
 - `list_applications` — compact application rows (company, role, status, dates, optional fit total), filterable by text/status/lookback
-- `get_application_details` — one application: stage, last few email subjects, interview rounds, action summary, fit totals. No bodies, senders, or JD text
+- `get_application_details` — one application: stage, last few email subjects, interview rounds, action summary, fit totals, and recovery provenance (`foundVia`, `matchSignals`). No bodies, senders, posting URLs, candidate text, or JD text
 - `get_application_insights` — the **stored** latest insights run (timestamp, headline/conclusion, coverage counts, sample sizes). Does not Re-run or call OpenAI
-- `save_job_prospect` — store a pasted JD (raw + cleaned) with extracted company/title and optional location, seniority, requisition ID, URL, and salary. Matching and scoring happen later through the existing Gmail recovery pipeline
+- `save_job_prospect` — Claude extracts company and title from the pasted JD (aggregator pastes are the usual input) and passes the original text plus optional location, seniority, requisition ID, URL, and salary. URL and requisition ID are optional and are not required for automatic matching. Raw text is stored separately from a deterministically cleaned copy (aggregator UI clutter stripped, no second LLM call). The save does not create an application. It may start a **company-scoped** background recovery run: if the prospect matches a Gmail application, that run can attach it, score it, and sync the tracker. `recoveryQueued: true` means a run was started or already running, not that scoring finished. If a recovery run is already in progress, the company-scoped request is remembered and processed when that run finishes. Gmail/API full recovery is unchanged (all pending companies in the sync window)
 
-**What it cannot do yet**
+**Matching (tested)**
 
-- Writes: tracker updates, Gmail drafts, scoring on capture, Gmail sync, insights Re-run
-- Direct Gmail or resume-file access
+- Auto-attach only when the company and role are unique and specific, seniority and other known identity fields agree, and no competing prospect or Gmail application exists
+- Generic titles, role-less Gmail applications, seniority conflicts, and multiple candidates go to review. Confirm by `prospectId` without fabricating a URL
+- Duplicate detection is company- and role-aware: identical JD text at two companies stays two prospects; a generic careers URL is not enough to merge
+- Both sequences work: prospect saved before Gmail confirmation, and prospect saved after Gmail already has an unscored application
+- Scores stay frozen: recovery never overwrites an existing evaluation
+
+**What Phase 2 can do**
+
+- `list_missing_job_descriptions` — paginated allowlisted applications that are **not scored** (Gmail grouping, plus recovery status, candidate count, latest subject, submitted source URLs). No bodies, senders, JD text, or credentials
+- `submit_jd_candidate` — attach a web-retrieved posting to an **existing** application key. Requires original text, source URL, source type, match evidence, and completeness (`full` or `partial`). Stores original + cleaned text on `recovery.candidates` with `matchLevel: "low"`. Competing URLs stay side by side; duplicates of the same normalized URL return `already_submitted`. Partial JDs are stored but cannot be confirmed for scoring. Claude's self-reported confidence is not an input
+- Confirm stays in the existing dashboard Review panel. A later recovery rebuild keeps MCP candidates instead of wiping them
+
+**Gmail evidence (Samsara SWE II)**
+
+- Stored `gmail_messages` have subject, from, and classifier role only — never bodies. The live confirmation/rejection emails name "Software Engineer II" in the snippet and have no job ID, team, requisition, or original application URL. MCP already returns subjects on details; nothing useful is sitting in Mongo unused. Gmail permissions and the stored-message shape are unchanged
+
+**What Phase 1–2 do not do**
+
+- Score at the moment of capture, or run a full 120-day recovery across unrelated companies when a prospect is saved
+- Auto-score a submitted JD candidate, pick among competing postings, or overwrite a scored evaluation
+- Autonomous web scraping, scheduled browsing, or a new job queue
+- Direct Gmail or resume-file access from MCP (including raw bodies)
 - An MCP client inside the web app
 - The rest of the Ask assistant catalog (`list_tracker`, `list_top_jobs`, `get_jd_excerpt`, `propose_*`, cost summary)
+- A cross-process scoring claim (API and MCP still have separate in-memory run locks; `upsertIfUnscored` keeps the first stored score if both score the same key)
 
 **Run it**
 
@@ -254,7 +276,7 @@ Default local URI in `.env.example`:
 
 - `mongodb://127.0.0.1:27017/job_agent_mvp`
 
-Gmail and recovery collections: `gmail_auth`, `gmail_messages` (classifications only), `application_evaluations` (recovered JD + blind score + outcome), `ats_boards` (board slug cache), `serper_usage`, `llm_usage` (per-call token counts and cost, tagged by feature).
+Gmail and recovery collections: `gmail_auth`, `gmail_messages` (classifications only), `application_evaluations` (recovered JD + blind score + outcome), `job_prospects` (Phase 1 saved JDs: raw + cleaned text, unmatched until recovery attaches them), `ats_boards` (board slug cache), `serper_usage`, `llm_usage` (per-call token counts and cost, tagged by feature).
 
 Agentic layer collections: `agent_suggestions` and `agent_meta` (Next steps), `assistant_threads` and `assistant_proposals` (chat assistant), `gmail_outbox` (a log of every draft the app created).
 
@@ -396,7 +418,7 @@ Before publishing this project publicly:
 
 Gmail access is read + create drafts; the app cannot send email. Email bodies are fetched on demand and never stored. Only classifications, subjects/senders, and recovered job descriptions are kept in your local Mongo.
 
-The optional MCP server is local stdio only. Any Cursor chat that has it enabled can read compact application rows and the stored insights run, and can save a pasted JD as a `job_prospects` row. Read tools do not return email bodies, sender addresses, full job descriptions, or credentials. Saving a prospect does not create an application, write the tracker, or spend scoring budget.
+The optional MCP server is local stdio only (Phase 1–2). Any Cursor chat that has it enabled can read compact application rows and the stored insights run, save a pasted JD as a `job_prospects` row, list applications that still need a JD, and submit a retrieved posting as a review candidate. Read tools do not return email bodies, sender addresses, full job descriptions, or credentials. Phase 2 list rows may include submitted candidate source URLs so Claude can avoid duplicates. Saving a prospect does not create an application. Submitting a candidate does not score. A later company-scoped recovery run can attach a prospect; dashboard confirm scores a candidate.
 
 This repository is configured so local resume files and common secret/local artifact paths are ignored by git. You are still responsible for reviewing staged files before pushing.
 

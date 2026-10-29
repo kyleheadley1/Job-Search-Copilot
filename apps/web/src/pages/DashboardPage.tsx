@@ -967,6 +967,7 @@ function ReviewPanel({
           {candidates.map((c) => {
             const id = c.prospectId ?? c.url ?? c.title ?? "candidate";
             const label = c.title ?? c.url ?? "Saved prospect";
+            const partial = c.completeness === "partial";
             return (
               <div key={id} className="rowBetween">
                 <span>
@@ -978,10 +979,12 @@ function ReviewPanel({
                     label
                   )}
                   {c.location && <span className="muted"> · {c.location}</span>}
+                  {c.sourceType && <span className="muted smallText"> · {c.sourceType}</span>}
                   <span className="muted smallText"> · {c.matchLevel} match</span>
+                  {partial && <span className="muted smallText"> · partial JD, not eligible to score</span>}
                 </span>
                 <button
-                  disabled={busy !== null}
+                  disabled={busy !== null || partial}
                   onClick={() => void run(id, () => api.gmailConfirmCandidate(app.key, { url: c.url, prospectId: c.prospectId }))}
                 >
                   {busy === id ? "Scoring…" : "This is the one"}

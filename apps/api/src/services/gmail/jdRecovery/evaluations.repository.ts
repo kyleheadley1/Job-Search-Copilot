@@ -17,7 +17,18 @@ export type RecoveryAttempt = {
 };
 
 /** Which pipeline step surfaced a posting. */
-export type RecoveryStage = "email" | "email_board" | "guessed_board" | "serper_board" | "serper" | "manual" | "prospect";
+export type RecoveryStage =
+  | "email"
+  | "email_board"
+  | "guessed_board"
+  | "serper_board"
+  | "serper"
+  | "manual"
+  | "prospect"
+  | "mcp";
+
+export type JdCompleteness = "full" | "partial";
+export type JdSourceType = "company_site" | "ats" | "aggregator" | "other";
 
 /** A recovered posting that wasn't verified automatically; kept so the user can pick it. */
 export type RecoveryCandidate = {
@@ -29,7 +40,14 @@ export type RecoveryCandidate = {
   title?: string;
   company?: string;
   location?: string;
+  /** Cleaned posting text used if the user confirms this candidate. */
   text: string;
+  /** Original retrieved text for MCP submissions; never sent to the scorer until confirm. */
+  rawText?: string;
+  completeness?: JdCompleteness;
+  sourceType?: JdSourceType;
+  retrievedAt?: string;
+  matchEvidence?: string[];
 };
 
 /** What a confirmed company board held, so "not found" can say "closed" vs "title didn't match". */
@@ -167,7 +185,20 @@ export const evaluationsRepository = {
     await col.replaceOne({ _id: evaluation.key }, evaluation, { upsert: true });
   },
 
-  /** Write an evaluation unless a scored row already exists for this key. Never overwrites a score. */
+  /**
+   * Write an evaluation unless a scored row already exists for this key. Never overwrites a score.
+   *
+   * Cross-process scoring claim (not implemented): API and MCP each have their own in-memory
+   * `state.running`, so two workers can both call the scorer before either writes. A short-lived
+   * Mongo claim would sit in front of `scoreBlind` / `scoreUserPosting`, not replace this write.
+   * Shape: `findOneAndUpdate` on `_id` where status is not `scored` and not a fresh `scoring`
+   * claim, setting `recovery.status: "scoring"` and `updatedAt`. Steal claims older than ~10
+   * minutes so a crashed worker does not stick. `needsRecovery` should treat fresh `scoring` as
+   * in-progress and stale `scoring` like a short `fetch_failed` retry — do not wait 24h and do
+   * not bump `RECOVERY_VERSION`. After the LLM returns, this method still publishes `scored` and
+   * still refuses to overwrite an existing score. Prospect matching already requeues non-scored
+   * rows, so a stolen/stale claim remains compatible with company-scoped follow-up runs.
+   */
   async upsertIfUnscored(evaluation: ApplicationEvaluation): Promise<ApplicationEvaluation> {
     const col = await this.collection();
     const existing = await col.findOne({ _id: evaluation.key });

@@ -8,6 +8,7 @@ import {
   isDuplicateOf,
   isSpecificJobUrl,
   matchProspectsToApplication,
+  PROSPECT_MATCH_LOOKBACK_DAYS,
 } from "../../services/gmail/jdRecovery/prospectMatch.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import {
@@ -283,7 +284,7 @@ describe("saveJobProspect", () => {
     expect(saved.sourceUrl).toBeUndefined();
     expect(saved.requisitionId).toBeUndefined();
     expect(saved.recoveryQueued).toBe(true);
-    expect(store.recovery).toHaveBeenCalledOnce();
+    expect(store.recovery).toHaveBeenCalledWith(PROSPECT_MATCH_LOOKBACK_DAYS, { companyKey: "stripe" });
     expect(store.rows[0]?.rawText).toContain("Easy Apply");
     expect(store.rows[0]?.cleanedText).not.toMatch(/Easy Apply/i);
     expect(store.rows[0]?.cleanedText).toContain("5+ years TypeScript");

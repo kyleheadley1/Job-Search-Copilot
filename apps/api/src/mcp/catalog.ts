@@ -1,6 +1,18 @@
 import { z } from "zod";
 import type { GmailApplication } from "../services/gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../services/gmail/jdRecovery/evaluations.repository.js";
+import {
+  AlreadyScoredError,
+  EvaluationNotFoundError,
+} from "../services/gmail/jdRecovery/runRecovery.js";
+import {
+  CandidatesFullError,
+  CompanyMismatchError,
+  InvalidJdCandidateError,
+  listMissingJobDescriptions,
+  type SubmitJdCandidateInput,
+  type SubmitJdCandidateResult,
+} from "../services/gmail/jdRecovery/jdCandidates.service.js";
 import type { SaveJobProspectInput, SaveJobProspectResult } from "../services/gmail/jdRecovery/jobProspects.service.js";
 import type { InsightsRun } from "../services/insights/insights.repository.js";
 import { toDetailsView, toInsightsView, toListRow } from "./views.js";
@@ -33,6 +45,7 @@ export type McpDeps = {
   getEvaluationsByKeys: (keys: string[]) => Promise<Map<string, ApplicationEvaluation>>;
   getLatestInsightsRun: () => Promise<InsightsRun | null>;
   saveJobProspect: (input: SaveJobProspectInput) => Promise<SaveJobProspectResult>;
+  submitJdCandidate: (input: SubmitJdCandidateInput) => Promise<SubmitJdCandidateResult>;
 };
 
 export const ListApplicationsInput = z
@@ -59,6 +72,36 @@ const optionalText = (max: number) =>
     .max(max)
     .optional()
     .transform((value) => (value ? value : undefined));
+
+export const ListMissingJobDescriptionsInput = z
+  .object({
+    query: z.string().trim().min(1).max(200).optional(),
+    days: z.number().int().min(1).max(MCP_MAX_DAYS).default(MCP_DEFAULT_DAYS),
+    limit: z.number().int().min(1).max(MCP_MAX_LIMIT).default(MCP_DEFAULT_LIMIT),
+    offset: z.number().int().min(0).max(10_000).default(0),
+  })
+  .strict();
+
+const isoTimestamp = z
+  .string()
+  .trim()
+  .min(10)
+  .max(40)
+  .refine((value) => !Number.isNaN(Date.parse(value)), { message: "retrievedAt must be an ISO timestamp" });
+
+export const SubmitJdCandidateInputSchema = z
+  .object({
+    applicationKey: z.string().trim().min(1).max(500),
+    company: z.string().trim().min(1).max(200),
+    title: optionalText(300),
+    originalText: z.string().min(40).max(80_000),
+    sourceUrl: z.string().url(),
+    sourceType: z.enum(["company_site", "ats", "aggregator", "other"]),
+    retrievedAt: isoTimestamp.optional(),
+    matchEvidence: z.array(z.string().trim().min(1).max(400)).min(1).max(10),
+    completeness: z.enum(["full", "partial"]),
+  })
+  .strict();
 
 export const SaveJobProspectInputSchema = z
   .object({
@@ -119,6 +162,44 @@ const getApplicationDetails = async (args: z.infer<typeof GetApplicationDetailsI
 const getApplicationInsights = async (_args: z.infer<typeof GetApplicationInsightsInput>, deps: McpDeps) =>
   toInsightsView(await deps.getLatestInsightsRun());
 
+const listMissing = async (args: z.infer<typeof ListMissingJobDescriptionsInput>, deps: McpDeps) => {
+  const apps = await deps.getApplications(args.days);
+  const evaluations = await deps.getEvaluationsByKeys(apps.map((app) => app.key));
+  const page = listMissingJobDescriptions(apps, evaluations, {
+    offset: args.offset,
+    limit: args.limit,
+    query: args.query,
+  });
+  return { days: args.days, offset: args.offset, ...page };
+};
+
+const mapSubmitError = (error: unknown): never => {
+  if (error instanceof EvaluationNotFoundError) throw new McpToolError("NOT_FOUND", error.message);
+  if (error instanceof CompanyMismatchError) throw new McpToolError("COMPANY_MISMATCH", error.message);
+  if (error instanceof AlreadyScoredError) throw new McpToolError("ALREADY_SCORED", error.message);
+  if (error instanceof InvalidJdCandidateError) throw new McpToolError("INVALID_CANDIDATE", error.message);
+  if (error instanceof CandidatesFullError) throw new McpToolError("CANDIDATES_FULL", error.message);
+  throw error;
+};
+
+const submitCandidate = async (args: z.infer<typeof SubmitJdCandidateInputSchema>, deps: McpDeps) => {
+  try {
+    return await deps.submitJdCandidate({
+      applicationKey: args.applicationKey,
+      company: args.company,
+      title: args.title,
+      originalText: args.originalText,
+      sourceUrl: args.sourceUrl,
+      sourceType: args.sourceType,
+      retrievedAt: args.retrievedAt,
+      matchEvidence: args.matchEvidence,
+      completeness: args.completeness,
+    });
+  } catch (error) {
+    return mapSubmitError(error);
+  }
+};
+
 export const MCP_TOOLS = [
   {
     name: "list_applications" as const,
@@ -144,9 +225,23 @@ export const MCP_TOOLS = [
   {
     name: "save_job_prospect" as const,
     description:
-      "Save a pasted job description as a prospect for later Gmail matching. Extract company and title from the JD and pass the original pasted text plus any other structured fields you have. Location, seniority, requisition ID, posting URL, and salary are optional. Does not create an application, write the tracker, or score the role.",
+      "Save a pasted job description as a prospect for Gmail matching. Extract company and title from the JD and pass the original pasted text plus any other structured fields you have. Location, seniority, requisition ID, posting URL, and salary are optional. The save itself does not create an application or score the role, but it may start a background JD recovery run: if the prospect matches a Gmail application, that run can attach it, score the application, and sync the tracker. `recoveryQueued: true` means a run was started or already running, not that matching or scoring finished; check get_application_details afterwards.",
     inputSchema: SaveJobProspectInputSchema,
     execute: saveJobProspect,
+  },
+  {
+    name: "list_missing_job_descriptions" as const,
+    description:
+      "List applications that still need a job description (not scored). Returns an allowlisted page: application key, company, title, applied date if known, recovery status, and submitted candidate source metadata. No email bodies, senders, JD text, or credentials. Use this before submit_jd_candidate. Does not start recovery or scoring.",
+    inputSchema: ListMissingJobDescriptionsInput,
+    execute: listMissing,
+  },
+  {
+    name: "submit_jd_candidate" as const,
+    description:
+      "Submit a web-retrieved job posting as a review candidate for an existing Gmail application key. Requires the original retrieved text, source URL, source type, match evidence, and completeness (full or partial). Stores original plus cleaned text on the existing evaluation. Does not score, does not pick a winner among competing candidates, and does not overwrite a scored evaluation. Partial JDs are stored for review but are ineligible to score. The user must confirm the match in the dashboard before scoring. Self-reported confidence is not an input and is never treated as proof of a match.",
+    inputSchema: SubmitJdCandidateInputSchema,
+    execute: submitCandidate,
   },
 ];
 

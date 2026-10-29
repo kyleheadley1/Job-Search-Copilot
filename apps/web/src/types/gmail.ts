@@ -83,6 +83,10 @@ export type EvaluationSummary = {
     location?: string;
     matchLevel: MatchLevel;
     source: string;
+    completeness?: "full" | "partial";
+    sourceType?: "company_site" | "ats" | "aggregator" | "other";
+    retrievedAt?: string;
+    matchEvidence?: string[];
   }>;
   verifiedBy?: "auto" | "user";
   jdTitle?: string;

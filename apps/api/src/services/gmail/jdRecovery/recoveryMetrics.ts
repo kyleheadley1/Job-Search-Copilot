@@ -16,6 +16,7 @@ export const inferCandidateStage = (
   if (c.source === "serper") return "serper";
   if (c.source === "manual") return "manual";
   if (c.source === "prospect") return "prospect";
+  if (c.source === "mcp") return "mcp";
   return e.recovery.serperQueries > 0 ? "serper_board" : "guessed_board";
 };
 
@@ -35,6 +36,7 @@ const BUCKET: Record<RecoveryStage, StageBucket> = {
   serper: "serper",
   manual: "manual",
   prospect: "manual",
+  mcp: "manual",
 };
 
 export type RecoveryMetrics = {

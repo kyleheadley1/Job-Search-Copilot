@@ -95,7 +95,7 @@ export const saveJobProspect = async (input: SaveJobProspectInput): Promise<Save
   let recoveryQueued = false;
   if (prospect.status === "open") {
     try {
-      const started = await startRecoveryRun(PROSPECT_MATCH_LOOKBACK_DAYS);
+      const started = await startRecoveryRun(PROSPECT_MATCH_LOOKBACK_DAYS, { companyKey: prospect.companyKey });
       recoveryQueued = started.started || started.running;
     } catch (error) {
       logger.warn("Prospect saved but recovery enqueue failed", {

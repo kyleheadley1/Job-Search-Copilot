@@ -146,6 +146,7 @@ vi.mock("../../agents/jobAgent/orchestrator.js", () => ({
 }));
 
 import { triageJob } from "../../agents/jobAgent/orchestrator.js";
+import { gmailClient } from "../../services/gmail/gmailClient.js";
 import { discoverBoards, listBoard, type BoardListing } from "../../services/gmail/jdRecovery/atsBoards.js";
 import { serperClient, serperUsageRepository } from "../../services/gmail/jdRecovery/serperClient.js";
 import { computeJdTextHash } from "../../lib/jdTextHash.js";
@@ -158,6 +159,7 @@ import {
   buildSerperQueries,
   confirmCandidate,
   EvaluationNotFoundError,
+  IncompleteJdError,
   InvalidTitleError,
   scorePastedJd,
   updateApplicationTitle,
@@ -165,8 +167,11 @@ import {
   RECOVERY_VERSION,
   rankSerperResults,
   recoverApplication,
+  resetRecoveryRunStateForTests,
   runRecovery,
   runScoringDiagnostic,
+  startRecoveryRun,
+  getRecoveryRunState,
 } from "../../services/gmail/jdRecovery/runRecovery.js";
 import { buildRubricSummary, withEvaluations } from "../../services/gmail/jdRecovery/summary.js";
 
@@ -255,10 +260,16 @@ beforeEach(() => {
   state.boards.clear();
   state.discovered = [];
   state.prospects = [];
+  resetRecoveryRunStateForTests();
   vi.mocked(listBoard).mockClear();
   vi.mocked(discoverBoards).mockClear();
   vi.mocked(triageJob).mockClear();
   vi.mocked(serperClient.search).mockClear();
+  vi.mocked(gmailClient.getMessage).mockImplementation(async (id: string) => {
+    const email = state.inbox.get(id);
+    if (!email) throw new Error(`no email ${id}`);
+    return email;
+  });
   vi.mocked(serperClient.isConfigured).mockReturnValue(true);
   vi.mocked(serperUsageRepository.record).mockClear();
   vi.mocked(evaluationsRepository.updateOutcome).mockClear();
@@ -964,6 +975,71 @@ describe("Prospect matching in recovery", () => {
   });
 });
 
+describe("Company-scoped recovery", () => {
+  it("processes only the scoped company and leaves other pending apps untouched", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "stripe::billing", company: "Stripe", role: "Staff Software Engineer, Billing Platform", appliedDay: 28 });
+    addProspect({ company: "Stripe", title: "Staff Software Engineer, Billing Platform" });
+    addApp({ key: "acme::runtime", company: "Acme", role: "Staff Software Engineer, Platform Runtime", appliedDay: 27 });
+    addProspect({ company: "Acme", title: "Staff Software Engineer, Platform Runtime" });
+
+    const scoped = await runRecovery(30, 5, { companyKey: normalizeCompany("Stripe") });
+    expect(scoped.processed).toBe(1);
+    expect(state.evaluations.get("stripe::billing")!.recovery.status).toBe("scored");
+    expect(state.evaluations.has("acme::runtime")).toBe(false);
+    expect(state.prospects.find((p) => p.company === "Acme")?.status).toBe("open");
+  });
+
+  it("still processes every pending company when unscoped", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "stripe::billing", company: "Stripe", role: "Staff Software Engineer, Billing Platform", appliedDay: 28 });
+    addProspect({ company: "Stripe", title: "Staff Software Engineer, Billing Platform" });
+    addApp({ key: "acme::runtime", company: "Acme", role: "Staff Software Engineer, Platform Runtime", appliedDay: 27 });
+    addProspect({ company: "Acme", title: "Staff Software Engineer, Platform Runtime" });
+
+    const unscoped = await runRecovery(30, 5);
+    expect(unscoped.processed).toBe(2);
+    expect(state.evaluations.get("stripe::billing")!.recovery.status).toBe("scored");
+    expect(state.evaluations.get("acme::runtime")!.recovery.status).toBe("scored");
+  });
+
+  it("runs a company-scoped request after an in-flight recovery finishes", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "stripe::runtime", company: "Stripe", role: "Staff Software Engineer, Platform Runtime", appliedDay: 28 });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(gmailClient.getMessage).mockImplementation(async (id: string) => {
+      await held;
+      const email = state.inbox.get(id);
+      if (!email) throw new Error(`no email ${id}`);
+      return email;
+    });
+
+    const first = await startRecoveryRun(30);
+    expect(first.started).toBe(true);
+    await vi.waitFor(() => expect(vi.mocked(gmailClient.getMessage).mock.calls.length).toBeGreaterThan(0));
+
+    addApp({ key: "acme::billing", company: "Acme", role: "Staff Software Engineer, Billing Platform", appliedDay: 27 });
+    addProspect({ company: "Acme", title: "Staff Software Engineer, Billing Platform" });
+    const second = await startRecoveryRun(30, { companyKey: normalizeCompany("Acme") });
+    expect(second.started).toBe(false);
+    expect(getRecoveryRunState()).toMatchObject({ running: true, deferred: 1 });
+
+    release();
+    await vi.waitFor(() => {
+      expect(getRecoveryRunState().running).toBe(false);
+      expect(getRecoveryRunState().deferred).toBe(0);
+    });
+
+    expect(state.evaluations.get("stripe::runtime")!.recovery.status).not.toBe("scored");
+    expect(state.evaluations.get("acme::billing")!.recovery.status).toBe("scored");
+    expect(state.prospects[0]?.attachedKey).toBe("acme::billing");
+  });
+});
+
 describe("Serper helpers", () => {
   it("builds at most two queries, req ID first", () => {
     expect(buildSerperQueries("UnitedHealth Group", "Associate Software Engineer", "2389186")).toEqual([
@@ -981,5 +1057,134 @@ describe("Serper helpers", () => {
         { title: "", link: "https://jobs.lever.co/acme/1" },
       ]),
     ).toEqual(["https://jobs.lever.co/acme/1", "https://acme.com/about"]);
+  });
+});
+
+describe("MCP submitted candidates", () => {
+  const mcpCandidate = (over: Partial<NonNullable<ApplicationEvaluation["recovery"]["candidates"]>[number]>) => ({
+    url: "https://www.builtinnyc.com/job/fluxcap/1",
+    source: "mcp" as const,
+    stage: "mcp" as const,
+    matchLevel: "low" as const,
+    title: "Forward Deployed Software Engineer",
+    company: "Fluxcap",
+    text: LONG,
+    rawText: LONG,
+    completeness: "full" as const,
+    sourceType: "aggregator" as const,
+    retrievedAt: "2026-10-28T12:00:00.000Z",
+    matchEvidence: ["exact company and title"],
+    ...over,
+  });
+
+  it("refuses to score a partial JD and scores a confirmed full candidate", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "intelligems::fse", company: "Intelligems", role: "Full Stack Engineer", appliedDay: 28 });
+    const partialEval: ApplicationEvaluation = {
+      key: "intelligems::fse",
+      company: "Intelligems",
+      role: "Full Stack Engineer",
+      appliedAt: day(28),
+      recovery: {
+        status: "unverified",
+        attempts: [],
+        serperQueries: 0,
+        candidates: [
+          mcpCandidate({
+            url: "https://www.linkedin.com/jobs/view/1",
+            title: "Full Stack Engineer",
+            company: "Intelligems",
+            completeness: "partial",
+            text: "Short aggregator blurb",
+          }),
+        ],
+      },
+      outcome: { status: "applied", updatedAt: day(28), history: [] },
+      createdAt: day(28),
+      updatedAt: day(28),
+    };
+    state.evaluations.set(partialEval.key, partialEval);
+
+    await expect(confirmCandidate("intelligems::fse", "https://www.linkedin.com/jobs/view/1")).rejects.toBeInstanceOf(
+      IncompleteJdError,
+    );
+    expect(state.evaluations.get("intelligems::fse")!.recovery.status).toBe("unverified");
+    expect(triageJob).not.toHaveBeenCalled();
+
+    addApp({ key: "fluxcap::fdse", company: "Fluxcap", role: "Forward Deployed Software Engineer", appliedDay: 28 });
+    state.evaluations.set("fluxcap::fdse", {
+      ...partialEval,
+      key: "fluxcap::fdse",
+      company: "Fluxcap",
+      role: "Forward Deployed Software Engineer",
+      recovery: {
+        status: "unverified",
+        attempts: [],
+        serperQueries: 0,
+        candidates: [mcpCandidate({})],
+      },
+    });
+    const scored = await confirmCandidate("fluxcap::fdse", "https://www.builtinnyc.com/job/fluxcap/1");
+    expect(scored.recovery.status).toBe("scored");
+    expect(scored.fit?.total).toBe(78);
+    expect(scored.recovery.foundVia).toBe("mcp");
+    expect(scored.recovery.verifiedBy).toBe("user");
+    expect(scored.jd?.text).toBe(LONG);
+
+    vi.mocked(triageJob).mockClear();
+    state.evaluations.set("fluxcap::fdse", {
+      ...scored,
+      recovery: { ...scored.recovery, candidates: [mcpCandidate({})] },
+    });
+    await expect(confirmCandidate("fluxcap::fdse", "https://www.builtinnyc.com/job/fluxcap/1")).rejects.toBeInstanceOf(
+      AlreadyScoredError,
+    );
+    expect(state.evaluations.get("fluxcap::fdse")!.fit?.total).toBe(78);
+    expect(triageJob).not.toHaveBeenCalled();
+  });
+
+  it("keeps MCP candidates when a later recovery rebuild finds nothing", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    const app = addApp({
+      key: "samsara::software engineer",
+      company: "Samsara",
+      role: "Software Engineer II",
+      appliedDay: 28,
+    });
+    state.evaluations.set(app.key, {
+      key: app.key,
+      company: app.company,
+      role: app.role,
+      appliedAt: app.appliedAt,
+      recovery: {
+        status: "unverified",
+        reason: "board_found_no_search",
+        attempts: [],
+        serperQueries: 0,
+        candidates: [
+          mcpCandidate({
+            url: "https://www.samsara.com/careers/jobs/backend",
+            title: "Software Engineer II, Backend",
+            company: "Samsara",
+          }),
+          mcpCandidate({
+            url: "https://www.samsara.com/careers/jobs/frontend",
+            title: "Software Engineer II, Frontend",
+            company: "Samsara",
+          }),
+        ],
+      },
+      outcome: { status: "applied", updatedAt: app.appliedAt, history: [] },
+      createdAt: app.appliedAt,
+      updatedAt: app.appliedAt,
+    });
+
+    const result = await recoverApplication(app, usage());
+    expect(result.evaluation.recovery.status).toBe("unverified");
+    expect(result.evaluation.recovery.candidates?.map((c) => c.url)).toEqual([
+      "https://www.samsara.com/careers/jobs/backend",
+      "https://www.samsara.com/careers/jobs/frontend",
+    ]);
+    expect(result.evaluation.fit).toBeUndefined();
   });
 });

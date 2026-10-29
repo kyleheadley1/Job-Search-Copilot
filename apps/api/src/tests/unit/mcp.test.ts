@@ -4,12 +4,16 @@ import {
   GetApplicationDetailsInput,
   GetApplicationInsightsInput,
   ListApplicationsInput,
+  ListMissingJobDescriptionsInput,
   MCP_MAX_DAYS,
   MCP_TOOL_NAMES,
+  MCP_TOOLS,
   McpToolError,
   runMcpTool,
+  SubmitJdCandidateInputSchema,
   type McpDeps,
 } from "../../mcp/catalog.js";
+import { submitJdCandidate } from "../../services/gmail/jdRecovery/jdCandidates.service.js";
 import { createMcpServer } from "../../mcp/server.js";
 import { toInsightsView, toListRow } from "../../mcp/views.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
@@ -87,10 +91,15 @@ const evaluation = {
   appliedAt: "2026-10-01T00:00:00.000Z",
   recovery: {
     status: "scored",
-    attempts: [],
+    attempts: [{ url: "https://attempt-secret.example/job/1", source: "email_link", ok: false, reason: "http_403" }],
     serperQueries: 0,
     recoveredRole: "Staff Engineer",
-    match: { level: "high", signals: [] },
+    foundVia: "prospect",
+    source: "manual",
+    url: "https://posting-secret.example/job/1",
+    notes: ["internal_note_secret"],
+    candidates: [{ url: "https://candidate-secret.example/job", source: "serper", matchLevel: "low", text: "CANDIDATE TEXT SECRET" }],
+    match: { level: "high", signals: ["prospect_auto_attached"] },
   },
   jd: { text: "FULL JOB DESCRIPTION SECRET", textHash: "h", title: "Staff Engineer" },
   fit: {
@@ -171,17 +180,22 @@ const deps = (): McpDeps => ({
   saveJobProspect: vi.fn(async () => {
     throw new Error("saveJobProspect should not run in read-tool tests");
   }),
+  submitJdCandidate: vi.fn(async () => {
+    throw new Error("submitJdCandidate should not run in read-tool tests");
+  }),
 });
 
 const json = (value: unknown) => JSON.stringify(value);
 
 describe("MCP tool discovery", () => {
-  it("exposes the three read tools plus save_job_prospect", () => {
+  it("exposes the Phase 1 tools plus missing-JD recovery tools", () => {
     expect(MCP_TOOL_NAMES).toEqual([
       "list_applications",
       "get_application_details",
       "get_application_insights",
       "save_job_prospect",
+      "list_missing_job_descriptions",
+      "submit_jd_candidate",
     ]);
     const server = createMcpServer(deps());
     for (const name of MCP_TOOL_NAMES) {
@@ -228,7 +242,15 @@ describe("MCP tool results", () => {
       company: "Acme",
       status: "interviewing",
       actionNeeded: { type: "schedule", summary: "Pick a time for the screen", deadline: "2026-10-08T00:00:00.000Z" },
-      evaluation: { status: "scored", fitTotal: 72, recommendation: "apply", jdTitle: "Staff Engineer" },
+      evaluation: {
+        status: "scored",
+        fitTotal: 72,
+        recommendation: "apply",
+        matchLevel: "high",
+        jdTitle: "Staff Engineer",
+        foundVia: "prospect",
+        matchSignals: ["prospect_auto_attached"],
+      },
     });
     expect(result.emails).toEqual([
       { date: "2026-10-01T00:00:00.000Z", eventType: "applied", subject: "Thanks for applying" },
@@ -332,13 +354,68 @@ describe("MCP tool results", () => {
   });
 });
 
+describe("MCP evaluation provenance", () => {
+  it("allowlists only the evaluation fields the details tool may return", async () => {
+    const result = JSON.parse(json(await runMcpTool("get_application_details", { key: "acme:engineer" }, deps()))) as {
+      evaluation: Record<string, unknown>;
+    };
+    const allowed = new Set([
+      "status",
+      "fitTotal",
+      "recommendation",
+      "recommendedResume",
+      "matchLevel",
+      "foundVia",
+      "matchSignals",
+      "jdTitle",
+      "fitBreakdown",
+    ]);
+    for (const field of Object.keys(result.evaluation)) {
+      expect(allowed.has(field)).toBe(true);
+    }
+    expect(result.evaluation).not.toHaveProperty("attempts");
+    expect(result.evaluation).not.toHaveProperty("candidates");
+    expect(result.evaluation).not.toHaveProperty("notes");
+    expect(result.evaluation).not.toHaveProperty("url");
+  });
+
+  it("omits provenance fields when recovery has no stage or match", async () => {
+    const bare = {
+      ...evaluation,
+      recovery: { status: "not_found", attempts: [], serperQueries: 0 },
+      fit: undefined,
+    } as unknown as ApplicationEvaluation;
+    const d = deps();
+    d.getEvaluationsByKeys = vi.fn(async () => new Map([[bare.key, bare]]));
+    const result = JSON.parse(json(await runMcpTool("get_application_details", { key: "acme:engineer" }, d))) as {
+      evaluation: Record<string, unknown>;
+    };
+    expect(result.evaluation.status).toBe("not_found");
+    expect(result.evaluation).not.toHaveProperty("foundVia");
+    expect(result.evaluation).not.toHaveProperty("matchSignals");
+    expect(result.evaluation).not.toHaveProperty("matchLevel");
+  });
+});
+
+describe("save_job_prospect description", () => {
+  it("discloses background recovery, scoring, and tracker sync", () => {
+    const tool = MCP_TOOLS.find((entry) => entry.name === "save_job_prospect");
+    expect(tool?.description).toMatch(/background JD recovery/);
+    expect(tool?.description).toMatch(/score the application/);
+    expect(tool?.description).toMatch(/sync the tracker/);
+    expect(tool?.description).toMatch(/recoveryQueued: true/);
+    expect(tool?.description).not.toMatch(/write the tracker/);
+  });
+});
+
 describe("MCP authorization and PII boundaries", () => {
   it("does not leak credentials, senders, JD text, or quiet-good-fit companies", async () => {
     const d = deps();
     const listed = json(await runMcpTool("list_applications", {}, d));
     const details = json(await runMcpTool("get_application_details", { key: "acme:engineer" }, d));
     const insights = json(await runMcpTool("get_application_insights", {}, d));
-    const blob = `${listed}\n${details}\n${insights}`;
+    const missing = json(await runMcpTool("list_missing_job_descriptions", {}, d));
+    const blob = `${listed}\n${details}\n${insights}\n${missing}`;
     for (const secret of [
       "secret@example.com",
       "refresh-secret",
@@ -349,6 +426,11 @@ describe("MCP authorization and PII boundaries", () => {
       "SecretCo",
       "OPENAI_",
       "GOOGLE_",
+      "attempt-secret.example",
+      "posting-secret.example",
+      "candidate-secret.example",
+      "CANDIDATE TEXT SECRET",
+      "internal_note_secret",
     ]) {
       expect(blob).not.toContain(secret);
     }
@@ -389,5 +471,139 @@ describe("MCP invalid input", () => {
     expect(d.getApplications).not.toHaveBeenCalled();
     expect(d.getEvaluationsByKeys).not.toHaveBeenCalled();
     expect(d.getLatestInsightsRun).not.toHaveBeenCalled();
+    expect(() => ListMissingJobDescriptionsInput.parse({ limit: 99 })).toThrow(ZodError);
+    expect(() => SubmitJdCandidateInputSchema.parse({ applicationKey: "k", company: "Acme" })).toThrow(ZodError);
+    expect(() =>
+      SubmitJdCandidateInputSchema.parse({
+        applicationKey: "k",
+        company: "Acme",
+        originalText: "x".repeat(50),
+        sourceUrl: "https://example.com/job",
+        sourceType: "aggregator",
+        matchEvidence: ["title match"],
+        completeness: "full",
+        confidence: 0.99,
+      }),
+    ).toThrow(ZodError);
+  });
+});
+
+const FULL_JD = [
+  "Product Engineer",
+  "Beta",
+  "",
+  "Responsibilities",
+  "- Ship product features",
+  "- Work with customers",
+  "",
+  "Requirements",
+  "- 3+ years of software engineering",
+  "Build TypeScript services and React interfaces for our healthcare platform. ".repeat(8),
+].join("\n");
+
+describe("MCP Phase 2 missing JD tools", () => {
+  const phase2Deps = () => {
+    const evaluations = new Map<string, ApplicationEvaluation>([[evaluation.key, evaluation]]);
+    const apps = [poisonedAcme, otherApp];
+    const d: McpDeps = {
+      getApplications: vi.fn(async () => apps),
+      getEvaluationsByKeys: vi.fn(async (keys) => {
+        const map = new Map<string, ApplicationEvaluation>();
+        for (const key of keys) {
+          const row = evaluations.get(key);
+          if (row) map.set(key, row);
+        }
+        return map;
+      }),
+      getLatestInsightsRun: vi.fn(async () => insightsRun),
+      saveJobProspect: vi.fn(async () => {
+        throw new Error("saveJobProspect should not run in Phase 2 tests");
+      }),
+      submitJdCandidate: (input) =>
+        submitJdCandidate(input, {
+          getApplications: async () => apps,
+          findByKey: async (key) => evaluations.get(key) ?? null,
+          upsertIfUnscored: async (row) => {
+            const current = evaluations.get(row.key);
+            if (current?.recovery.status === "scored") return current;
+            evaluations.set(row.key, row);
+            return row;
+          },
+        }, 120),
+    };
+    return { d, evaluations };
+  };
+
+  it("lists only unscored applications with an allowlisted payload", async () => {
+    const { d } = phase2Deps();
+    const result = (await runMcpTool("list_missing_job_descriptions", { limit: 10 }, d)) as {
+      totalMatched: number;
+      applications: Array<Record<string, unknown>>;
+    };
+    expect(result.totalMatched).toBe(1);
+    expect(result.applications).toEqual([
+      {
+        applicationKey: "beta:pm",
+        company: "Beta",
+        title: "PM",
+        appliedAt: "2026-10-01T00:00:00.000Z",
+        appliedAtKnown: true,
+        furthestStage: "applied",
+        recoveryStatus: "none",
+        candidateCount: 0,
+        emailCount: 0,
+        submittedCandidates: [],
+      },
+    ]);
+    const payload = json(result);
+    expect(payload).not.toContain("secret@example.com");
+    expect(payload).not.toContain("FULL JOB DESCRIPTION SECRET");
+    expect(payload).not.toContain("CANDIDATE TEXT SECRET");
+  });
+
+  it("submits a candidate for review and keeps JD text out of the MCP response", async () => {
+    const { d, evaluations } = phase2Deps();
+    const result = JSON.parse(
+      json(
+        await runMcpTool(
+          "submit_jd_candidate",
+          {
+            applicationKey: "beta:pm",
+            company: "Beta",
+            title: "PM",
+            originalText: FULL_JD,
+            sourceUrl: "https://www.builtinnyc.com/job/pm/1?utm_source=x",
+            sourceType: "aggregator",
+            matchEvidence: ["Exact company and title"],
+            completeness: "full",
+          },
+          d,
+        ),
+      ),
+    ) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      applicationKey: "beta:pm",
+      status: "submitted",
+      reviewRequired: true,
+      scoringEligible: true,
+      completeness: "full",
+    });
+    expect(result).not.toHaveProperty("originalText");
+    expect(result).not.toHaveProperty("text");
+    expect(json(result)).not.toContain("Build TypeScript services");
+    const saved = evaluations.get("beta:pm")!;
+    expect(saved.recovery.status).toBe("unverified");
+    expect(saved.fit).toBeUndefined();
+    expect(saved.recovery.candidates![0]!.rawText).toContain("Product Engineer");
+    expect(saved.recovery.candidates![0]!.matchLevel).toBe("low");
+
+    const listed = JSON.parse(json(await runMcpTool("list_missing_job_descriptions", { query: "beta" }, d))) as {
+      applications: Array<{ submittedCandidates: Array<Record<string, unknown>> }>;
+    };
+    expect(listed.applications[0]?.submittedCandidates[0]).toMatchObject({
+      sourceType: "aggregator",
+      completeness: "full",
+    });
+    expect(json(listed)).not.toContain("Build TypeScript services");
   });
 });

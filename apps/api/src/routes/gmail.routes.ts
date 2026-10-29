@@ -18,6 +18,7 @@ import {
   AlreadyScoredError,
   confirmCandidate,
   EvaluationNotFoundError,
+  IncompleteJdError,
   InvalidTitleError,
   NoStoredJdError,
   runScoringDiagnostic,
@@ -217,7 +218,7 @@ gmailRouter.get("/evaluations", async (req, res, next) => {
       evaluations: evaluations.map(({ jd, recovery, fit, diagnostic: _diagnostic, ...rest }) => ({
         ...rest,
         fit: fit && { ...fit, detail: undefined },
-        recovery: { ...recovery, candidates: recovery.candidates?.map(({ text: _text, ...c }) => c) },
+        recovery: { ...recovery, candidates: recovery.candidates?.map(({ text: _text, rawText: _rawText, ...c }) => c) },
         jd: jd && { title: jd.title, company: jd.company, datePosted: jd.datePosted, chars: jd.text.length },
       })),
     });
@@ -252,6 +253,10 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
   }
   if (error instanceof InvalidTitleError) {
     res.status(400).json({ error: "invalid_title", message: error.message });
+    return true;
+  }
+  if (error instanceof IncompleteJdError) {
+    res.status(409).json({ error: "incomplete_jd", message: error.message });
     return true;
   }
   return false;
