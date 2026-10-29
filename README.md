@@ -218,13 +218,20 @@ Example `.cursor/mcp.json`:
 {
   "mcpServers": {
     "job-search-copilot": {
-      "command": "npm",
-      "args": ["run", "mcp"],
-      "env": { "MCP_STDIO": "1" }
+      "type": "stdio",
+      "command": "node",
+      "args": ["--import", "tsx", "${workspaceFolder}/apps/api/src/mcp/stdio.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "MCP_STDIO": "1",
+        "DOTENV_CONFIG_QUIET": "true"
+      }
     }
   }
 }
 ```
+
+After saving, reload MCP from Customize → MCPs (workspace/project scope, not User). The server should show as connected with `list_applications`, `get_application_details`, and `get_application_insights`. If it stays disconnected, open Output → MCP Logs.
 
 ## G. Mongo Setup
 

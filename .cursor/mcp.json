@@ -1,10 +1,18 @@
 {
   "mcpServers": {
     "job-search-copilot": {
-      "command": "npm",
-      "args": ["run", "mcp"],
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--import",
+        "tsx",
+        "${workspaceFolder}/apps/api/src/mcp/stdio.ts"
+      ],
+      "cwd": "${workspaceFolder}",
       "env": {
-        "MCP_STDIO": "1"
+        "MCP_STDIO": "1",
+        "DOTENV_CONFIG_QUIET": "true",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env:PATH}"
       }
     }
   }
