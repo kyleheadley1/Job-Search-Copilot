@@ -212,26 +212,7 @@ A local, read-only MCP server exposes `list_applications`, `get_application_deta
 
 Trust model: the same as `npm run dev` on this machine. Cursor launches the process as your OS user; it loads the root `.env` and `MONGO_URI` / `MONGO_DB_NAME`. There is no extra login or API token.
 
-Example `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "job-search-copilot": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["--import", "tsx", "${workspaceFolder}/apps/api/src/mcp/stdio.ts"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "MCP_STDIO": "1",
-        "DOTENV_CONFIG_QUIET": "true"
-      }
-    }
-  }
-}
-```
-
-After saving, reload MCP from Customize → MCPs (workspace/project scope, not User). The server should show as connected with `list_applications`, `get_application_details`, and `get_application_insights`. If it stays disconnected, open Output → MCP Logs.
+This machine’s `.cursor/mcp.json` launches with absolute paths (nvm Node 22, tsx loader, repo root). Cursor’s GUI PATH does not include `node`, and `--import tsx` only resolves if cwd is the repo. After changing the file, reload from Customize → MCPs (project/folder scope) and confirm `job-search-copilot` is connected. If it stays disconnected, open Output → MCP Logs.
 
 ## G. Mongo Setup
 
