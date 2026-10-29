@@ -226,7 +226,12 @@ gmailRouter.get("/evaluations", async (req, res, next) => {
   }
 });
 
-const ConfirmBodySchema = z.object({ url: z.string().url() });
+const ConfirmBodySchema = z
+  .object({
+    url: z.string().url().optional(),
+    prospectId: z.string().trim().min(1).max(80).optional(),
+  })
+  .refine((body) => Boolean(body.url || body.prospectId), { message: "url or prospectId is required" });
 const PasteBodySchema = z.object({
   text: z.string().trim().min(MIN_PASTED_JD_CHARS).max(50_000),
   url: z.string().url().optional(),
@@ -301,8 +306,8 @@ gmailRouter.post("/evaluations/:key/diagnose", async (req, res, next) => {
 
 gmailRouter.post("/evaluations/:key/confirm", async (req, res, next) => {
   try {
-    const { url } = ConfirmBodySchema.parse(req.body ?? {});
-    const evaluation = await confirmCandidate(req.params.key, url);
+    const { url, prospectId } = ConfirmBodySchema.parse(req.body ?? {});
+    const evaluation = await confirmCandidate(req.params.key, url ?? prospectId!);
     res.json({ evaluation: toEvaluationSummary(evaluation) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;

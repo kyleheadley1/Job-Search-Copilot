@@ -964,20 +964,31 @@ function ReviewPanel({
       {candidates.length > 0 && (
         <div className="stack" style={{ gap: "0.4rem" }}>
           <strong>Is it one of these?</strong>
-          {candidates.map((c) => (
-            <div key={c.url} className="rowBetween">
-              <span>
-                <a href={c.url} target="_blank" rel="noreferrer">
-                  {c.title ?? c.url}
-                </a>
-                {c.location && <span className="muted"> · {c.location}</span>}
-                <span className="muted smallText"> · {c.matchLevel} match</span>
-              </span>
-              <button disabled={busy !== null} onClick={() => void run(c.url, () => api.gmailConfirmCandidate(app.key, c.url))}>
-                {busy === c.url ? "Scoring…" : "This is the one"}
-              </button>
-            </div>
-          ))}
+          {candidates.map((c) => {
+            const id = c.prospectId ?? c.url ?? c.title ?? "candidate";
+            const label = c.title ?? c.url ?? "Saved prospect";
+            return (
+              <div key={id} className="rowBetween">
+                <span>
+                  {c.url ? (
+                    <a href={c.url} target="_blank" rel="noreferrer">
+                      {label}
+                    </a>
+                  ) : (
+                    label
+                  )}
+                  {c.location && <span className="muted"> · {c.location}</span>}
+                  <span className="muted smallText"> · {c.matchLevel} match</span>
+                </span>
+                <button
+                  disabled={busy !== null}
+                  onClick={() => void run(id, () => api.gmailConfirmCandidate(app.key, { url: c.url, prospectId: c.prospectId }))}
+                >
+                  {busy === id ? "Scoring…" : "This is the one"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="stack" style={{ gap: "0.4rem" }}>

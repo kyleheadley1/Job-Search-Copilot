@@ -168,13 +168,21 @@ const deps = (): McpDeps => ({
     return map;
   }),
   getLatestInsightsRun: vi.fn(async () => insightsRun),
+  saveJobProspect: vi.fn(async () => {
+    throw new Error("saveJobProspect should not run in read-tool tests");
+  }),
 });
 
 const json = (value: unknown) => JSON.stringify(value);
 
 describe("MCP tool discovery", () => {
-  it("exposes exactly the three read-only tools", () => {
-    expect(MCP_TOOL_NAMES).toEqual(["list_applications", "get_application_details", "get_application_insights"]);
+  it("exposes the three read tools plus save_job_prospect", () => {
+    expect(MCP_TOOL_NAMES).toEqual([
+      "list_applications",
+      "get_application_details",
+      "get_application_insights",
+      "save_job_prospect",
+    ]);
     const server = createMcpServer(deps());
     for (const name of MCP_TOOL_NAMES) {
       expect(server.toolInputSchemaJson(name)).toMatchObject({ type: "object" });

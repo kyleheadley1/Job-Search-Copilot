@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   cap: 10,
   boards: new Map<string, unknown>(),
   discovered: [] as unknown[],
+  prospects: [] as import("../../services/gmail/jdRecovery/jobProspects.repository.js").JobProspect[],
 }));
 
 vi.mock("../../services/gmail/jdRecovery/atsBoards.js", async (importOriginal) => ({
@@ -89,6 +90,12 @@ vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", () => ({
     upsert: vi.fn(async (e: ApplicationEvaluation) => {
       state.evaluations.set(e.key, structuredClone(e));
     }),
+    upsertIfUnscored: vi.fn(async (e: ApplicationEvaluation) => {
+      const cur = state.evaluations.get(e.key);
+      if (cur?.recovery.status === "scored") return structuredClone(cur);
+      state.evaluations.set(e.key, structuredClone(e));
+      return structuredClone(e);
+    }),
     setDiagnostic: vi.fn(async (key: string, diagnostic: ApplicationEvaluation["diagnostic"]) => {
       const e = state.evaluations.get(key);
       if (e) e.diagnostic = diagnostic;
@@ -110,6 +117,24 @@ vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", () => ({
   },
 }));
 
+vi.mock("../../services/gmail/jdRecovery/jobProspects.repository.js", () => ({
+  jobProspectsRepository: {
+    findOpen: vi.fn(async () => state.prospects.filter((p) => p.status === "open").map((p) => structuredClone(p))),
+    findOpenByCompanyKey: vi.fn(async (companyKey: string) =>
+      state.prospects.filter((p) => p.status === "open" && p.companyKey === companyKey).map((p) => structuredClone(p)),
+    ),
+    markAttached: vi.fn(async (id: string, key: string) => {
+      const prospect = state.prospects.find((p) => p.id === id);
+      if (!prospect) return null;
+      if (prospect.status === "attached" && prospect.attachedKey !== key) return null;
+      prospect.status = "attached";
+      prospect.attachedKey = key;
+      prospect.updatedAt = new Date().toISOString();
+      return structuredClone(prospect);
+    }),
+  },
+}));
+
 vi.mock("../../agents/jobAgent/orchestrator.js", () => ({
   triageJob: vi.fn(async () => ({
     score: { total: 78 },
@@ -123,7 +148,10 @@ vi.mock("../../agents/jobAgent/orchestrator.js", () => ({
 import { triageJob } from "../../agents/jobAgent/orchestrator.js";
 import { discoverBoards, listBoard, type BoardListing } from "../../services/gmail/jdRecovery/atsBoards.js";
 import { serperClient, serperUsageRepository } from "../../services/gmail/jdRecovery/serperClient.js";
+import { computeJdTextHash } from "../../lib/jdTextHash.js";
+import { normalizeCompany } from "../../services/gmail/gmailApplications.js";
 import { evaluationsRepository } from "../../services/gmail/jdRecovery/evaluations.repository.js";
+import type { JobProspect } from "../../services/gmail/jdRecovery/jobProspects.repository.js";
 import {
   AlreadyScoredError,
   ATS_SITE_FILTER,
@@ -196,6 +224,26 @@ const addApp = (opts: {
 const addPosting = (url: string, over: Partial<FetchedPosting> = {}) =>
   state.postings.set(url, { url, source: "greenhouse", text: LONG, ...over });
 
+const addProspect = (over: Partial<JobProspect> & Pick<JobProspect, "company" | "title">): JobProspect => {
+  const now = "2026-10-01T00:00:00.000Z";
+  const cleanedText = over.cleanedText ?? LONG;
+  const prospect: JobProspect = {
+    id: over.id ?? `p-${state.prospects.length + 1}`,
+    companyKey: over.companyKey ?? normalizeCompany(over.company),
+    rawText: over.rawText ?? cleanedText,
+    cleanedText,
+    cleanedTextHash: over.cleanedTextHash ?? computeJdTextHash(cleanedText),
+    status: over.status ?? "open",
+    createdAt: over.createdAt ?? now,
+    updatedAt: over.updatedAt ?? now,
+    ...over,
+  };
+  state.prospects.push(prospect);
+  return prospect;
+};
+
+const usage = () => ({ jobKeys: [...state.usage.jobKeys], queries: state.usage.queries, cap: state.cap });
+
 beforeEach(() => {
   state.apps = [];
   state.inbox.clear();
@@ -206,6 +254,7 @@ beforeEach(() => {
   state.cap = 10;
   state.boards.clear();
   state.discovered = [];
+  state.prospects = [];
   vi.mocked(listBoard).mockClear();
   vi.mocked(discoverBoards).mockClear();
   vi.mocked(triageJob).mockClear();
@@ -793,6 +842,125 @@ describe("JD recovery runner", () => {
     expect(s.byRecoveryStatus).toMatchObject({ scored: 3, unverified: 1 });
     expect(s.points.rejected?.map((p) => p.fit)).toEqual([70, 60]);
     expect(s.userVerified).toBe(0);
+  });
+});
+
+describe("Prospect matching in recovery", () => {
+  it("auto-attaches a unique specific company/role with no URL or requisition ID", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "stripe::billing", company: "Stripe", role: "Staff Software Engineer, Billing Platform", appliedDay: 28 });
+    addProspect({ company: "Stripe", title: "Staff Software Engineer, Billing Platform" });
+
+    await runRecovery(30, 5);
+
+    const evaluation = state.evaluations.get("stripe::billing")!;
+    expect(evaluation.recovery.status).toBe("scored");
+    expect(evaluation.recovery.url).toBeUndefined();
+    expect(evaluation.recovery.match?.signals).toContain("prospect_auto_attached");
+    expect(evaluation.jd?.text).toBe(LONG);
+    expect(state.prospects[0]?.status).toBe("attached");
+    expect(state.prospects[0]?.attachedKey).toBe("stripe::billing");
+    expect(triageJob).toHaveBeenCalledOnce();
+  });
+
+  it("puts generic titles and role-less Gmail applications in review, without fabricating URLs", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "acme::se", company: "Acme", role: "Software Engineer", appliedDay: 28 });
+    addApp({ key: "acme::", company: "Acme", role: null, appliedDay: 27 });
+    addProspect({ id: "generic", company: "Acme", title: "Software Engineer" });
+    addProspect({ id: "platform", company: "Acme", title: "Staff Software Engineer, Platform Runtime" });
+
+    await runRecovery(30, 5);
+
+    const generic = state.evaluations.get("acme::se")!;
+    expect(generic.recovery.status).not.toBe("scored");
+    expect(generic.recovery.candidates?.some((c) => c.prospectId === "generic" && !c.url)).toBe(true);
+    const unroled = state.evaluations.get("acme::")!;
+    expect(unroled.recovery.status).not.toBe("scored");
+    expect(unroled.recovery.candidates?.every((c) => c.prospectId && !c.url?.startsWith("https://prospect"))).toBe(true);
+  });
+
+  it("requires review when seniority differs or two prospects compete", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "fig::ios", company: "Figma", role: "Junior iOS Engineer", appliedDay: 28 });
+    addProspect({ id: "senior", company: "Figma", title: "Senior iOS Engineer" });
+    addApp({ key: "fig::pay", company: "Figma", role: "Staff Software Engineer, Payments", appliedDay: 27 });
+    addProspect({ id: "pay-a", company: "Figma", title: "Staff Software Engineer, Payments" });
+    addProspect({ id: "pay-b", company: "Figma", title: "Staff Software Engineer, Payments Platform" });
+
+    await runRecovery(30, 5);
+
+    expect(state.evaluations.get("fig::ios")!.recovery.status).not.toBe("scored");
+    expect(state.evaluations.get("fig::ios")!.recovery.candidates?.map((c) => c.prospectId)).toContain("senior");
+    expect(state.evaluations.get("fig::pay")!.recovery.status).not.toBe("scored");
+    expect(state.evaluations.get("fig::pay")!.recovery.candidates?.map((c) => c.prospectId).sort()).toEqual(["pay-a", "pay-b"]);
+  });
+
+  it("attaches a prospect saved after an unscored Gmail application, then confirms without a URL", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "linear::infra", company: "Linear", role: "Staff Software Engineer, Infrastructure", appliedDay: 28 });
+    await runRecovery(30, 5);
+    expect(state.evaluations.get("linear::infra")!.recovery.status).not.toBe("scored");
+    vi.mocked(triageJob).mockClear();
+
+    addProspect({ id: "linear-infra", company: "Linear", title: "Staff Software Engineer, Infrastructure" });
+    await runRecovery(30, 5);
+
+    const auto = state.evaluations.get("linear::infra")!;
+    expect(auto.recovery.status).toBe("scored");
+    expect(auto.recovery.url).toBeUndefined();
+    expect(state.prospects[0]?.attachedKey).toBe("linear::infra");
+
+    state.evaluations.set("linear::infra", {
+      ...auto,
+      recovery: {
+        ...auto.recovery,
+        status: "unverified",
+        candidates: [
+          {
+            prospectId: "linear-infra",
+            source: "prospect",
+            stage: "prospect",
+            matchLevel: "high",
+            title: "Staff Software Engineer, Infrastructure",
+            company: "Linear",
+            text: LONG,
+          },
+        ],
+      },
+      fit: undefined,
+    });
+    state.prospects[0]!.status = "open";
+    state.prospects[0]!.attachedKey = undefined;
+    vi.mocked(triageJob).mockClear();
+
+    const confirmed = await confirmCandidate("linear::infra", "linear-infra");
+    expect(confirmed.recovery.status).toBe("scored");
+    expect(confirmed.recovery.url).toBeUndefined();
+    expect(state.prospects[0]?.status).toBe("attached");
+  });
+
+  it("leaves the prospect open when scoring fails and never overwrites a later score", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "notion::data", company: "Notion", role: "Staff Data Engineer, Platform", appliedDay: 28 });
+    addProspect({ id: "notion-data", company: "Notion", title: "Staff Data Engineer, Platform" });
+    vi.mocked(triageJob).mockRejectedValueOnce(new Error("openai down"));
+
+    await runRecovery(30, 5);
+    expect(state.evaluations.get("notion::data")!.recovery.status).toBe("fetch_failed");
+    expect(state.evaluations.get("notion::data")!.recovery.reason).toMatch(/openai down/);
+    expect(state.prospects[0]?.status).toBe("open");
+
+    await runRecovery(30, 5);
+    const scored = state.evaluations.get("notion::data")!;
+    expect(scored.recovery.status).toBe("scored");
+    expect(scored.fit?.total).toBe(78);
+    expect(state.prospects[0]?.status).toBe("attached");
+
+    vi.mocked(triageJob).mockClear();
+    const again = await recoverApplication(state.apps[0]!, usage());
+    expect(again.evaluation.fit?.total).toBe(78);
+    expect(triageJob).not.toHaveBeenCalled();
   });
 });
 

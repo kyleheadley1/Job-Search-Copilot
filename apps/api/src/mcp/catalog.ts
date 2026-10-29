@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { GmailApplication } from "../services/gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../services/gmail/jdRecovery/evaluations.repository.js";
+import type { SaveJobProspectInput, SaveJobProspectResult } from "../services/gmail/jdRecovery/jobProspects.service.js";
 import type { InsightsRun } from "../services/insights/insights.repository.js";
 import { toDetailsView, toInsightsView, toListRow } from "./views.js";
 
@@ -31,6 +32,7 @@ export type McpDeps = {
   getApplications: (days: number) => Promise<GmailApplication[]>;
   getEvaluationsByKeys: (keys: string[]) => Promise<Map<string, ApplicationEvaluation>>;
   getLatestInsightsRun: () => Promise<InsightsRun | null>;
+  saveJobProspect: (input: SaveJobProspectInput) => Promise<SaveJobProspectResult>;
 };
 
 export const ListApplicationsInput = z
@@ -49,6 +51,42 @@ export const GetApplicationDetailsInput = z
   .strict();
 
 export const GetApplicationInsightsInput = z.object({}).strict();
+
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .transform((value) => (value ? value : undefined));
+
+export const SaveJobProspectInputSchema = z
+  .object({
+    rawText: z.string().min(50).max(80_000),
+    company: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(300),
+    location: optionalText(200),
+    seniority: optionalText(100),
+    requisitionId: optionalText(80),
+    sourceUrl: z.preprocess(
+      (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+      z.string().url().optional(),
+    ),
+    salary: optionalText(200),
+  })
+  .strict();
+
+const saveJobProspect = async (args: z.infer<typeof SaveJobProspectInputSchema>, deps: McpDeps) =>
+  deps.saveJobProspect({
+    rawText: args.rawText,
+    company: args.company,
+    title: args.title,
+    location: args.location,
+    seniority: args.seniority,
+    requisitionId: args.requisitionId,
+    sourceUrl: args.sourceUrl,
+    salary: args.salary,
+  });
 
 const matchesQuery = (app: GmailApplication, query: string | undefined): boolean => {
   if (!query) return true;
@@ -102,6 +140,13 @@ export const MCP_TOOLS = [
       "Return the latest stored insights run (coverage counts, sample sizes, screening tables, headline). Does not start a new analysis or spend LLM budget.",
     inputSchema: GetApplicationInsightsInput,
     execute: getApplicationInsights,
+  },
+  {
+    name: "save_job_prospect" as const,
+    description:
+      "Save a pasted job description as a prospect for later Gmail matching. Extract company and title from the JD and pass the original pasted text plus any other structured fields you have. Location, seniority, requisition ID, posting URL, and salary are optional. Does not create an application, write the tracker, or score the role.",
+    inputSchema: SaveJobProspectInputSchema,
+    execute: saveJobProspect,
   },
 ];
 

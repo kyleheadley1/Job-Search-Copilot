@@ -6,7 +6,7 @@ const jsonResult = (data: unknown, isError = false) => ({
   ...(isError ? { isError: true } : {}),
 });
 
-/** Build an MCP server that exposes the phase-1 read tools. Handlers stay in the catalog for reuse. */
+/** Build an MCP server that exposes the catalog tools. Handlers stay in the catalog for reuse. */
 export const createMcpServer = (deps: McpDeps): McpServer => {
   const server = new McpServer({ name: "job-search-copilot", version: "1.0.0" });
   for (const tool of MCP_TOOLS) {

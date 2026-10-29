@@ -230,7 +230,8 @@ const STAGE_NAME_RE =
 
 export const isStageNameRole = (role: string): boolean => STAGE_NAME_RE.test(role.trim());
 
-const isGenericRole = (role: string): boolean => [...matchTokens(role)].every((t) => GENERIC_ROLE_TOKENS.has(t));
+/** True when a title is only generic engineering words ("Software Engineer") with no specialty. */
+export const isGenericRole = (role: string): boolean => [...matchTokens(role)].every((t) => GENERIC_ROLE_TOKENS.has(t));
 
 const groupMessages = (messages: StoredGmailMessage[]): Group[] => {
   const byCompany = new Map<string, CompanyBucket>();

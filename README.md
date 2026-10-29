@@ -92,9 +92,9 @@ Two features act on your behalf, both built so that the model only reads and sug
 - Every paid feature has a hard monthly cap, spread evenly over the days left in the month: Top Jobs $2, Next steps agent $1.50, chat assistant $1.50, insights summary $0.30. When a day's share is used up, the feature falls back to free rules or says so without calling the model
 - The cost card shows this month's spend per feature against its cap
 
-**MCP (Cursor, initial / read-only)**
+**MCP (Cursor)**
 
-- A local stdio MCP server lets Cursor (or another MCP client) call three read tools against the same Mongo the dashboard uses. It does not write, sync Gmail, or spend LLM budget. See section F.
+- A local stdio MCP server lets Cursor (or another MCP client) call three read tools plus `save_job_prospect` against the same Mongo the dashboard uses. Saving a prospect does not create an application, write the tracker, or score. See section F.
 
 **Application insights (dashboard card)**
 
@@ -158,7 +158,7 @@ Gmail dashboard:
   - `src/services/proposals/` - the only code paths that apply approved actions (tracker status, Gmail draft)
   - `src/services/topJobs/` - alert parsing, pre-screen, location/open checks, budgeted scoring
   - `src/services/insights/` - callback statistics, coverage and seniority tables, weekly summary
-  - `src/mcp/` - read-only MCP server (stdio): tool catalog, compact views, Cursor launch entry
+  - `src/mcp/` - MCP server (stdio): tool catalog, compact views, Cursor launch entry
 - `apps/web/` - React + Vite frontend (Dashboard, Add Job, Top Jobs, Tracker)
 - `apps/extension/` - Chrome MV3 side-panel extension (React + Vite)
 - `scripts/` - root helper scripts (eval/regression utilities)
@@ -213,25 +213,26 @@ Scripts run with `tsx`. If `npx tsx` is blocked in your environment, use `node -
 
 ### Optional: MCP for Cursor (initial version)
 
-This is the first slice: a **local, read-only** MCP server so Cursor can ask about the search without a second copy of the product logic. MCP here is a transport (how Cursor talks to the existing API services), not a new scoring feature and not a new OpenAI budget line.
+This is a **local** MCP server so Cursor can ask about the search and save a pasted JD as a prospect, without a second copy of the product logic. MCP here is a transport (how Cursor talks to the existing API services), not a new scoring feature.
 
 **Why this shape**
 
 - Start with a server Cursor can call, not an in-app MCP client. The web Ask assistant already has its own tools; duplicating that as an MCP client was out of scope.
 - Reuse `getGmailApplications`, stored evaluations, and the latest insights run. Do not query Gmail live, do not re-run insights, and do not invent a second database layer.
-- Keep the surface small and read-only so a Cursor chat cannot mutate the tracker, create drafts, sync mail, or spend LLM budget. Write/`propose_*` tools and JD excerpts were deferred until this read path is trustworthy.
-- Return explicit field allowlists (compact rows, not Mongo documents with secrets stripped). That keeps email bodies, sender addresses, full JDs, and credentials off the wire.
+- Keep the write surface to one prospect-save tool. A Cursor chat cannot mutate the tracker, create drafts, sync mail, or score a role from MCP.
+- Return explicit field allowlists (compact rows, not Mongo documents with secrets stripped). That keeps email bodies, sender addresses, full JDs, and credentials off the read tools.
 - Trust model is the same as `npm run dev`: Cursor launches the process as the OS user, which loads the root `.env` and `MONGO_URI` / `MONGO_DB_NAME`. There is no extra login.
 
-**What it can do today (three tools)**
+**What it can do today**
 
 - `list_applications` — compact application rows (company, role, status, dates, optional fit total), filterable by text/status/lookback
 - `get_application_details` — one application: stage, last few email subjects, interview rounds, action summary, fit totals. No bodies, senders, or JD text
 - `get_application_insights` — the **stored** latest insights run (timestamp, headline/conclusion, coverage counts, sample sizes). Does not Re-run or call OpenAI
+- `save_job_prospect` — store a pasted JD (raw + cleaned) with extracted company/title and optional location, seniority, requisition ID, URL, and salary. Matching and scoring happen later through the existing Gmail recovery pipeline
 
 **What it cannot do yet**
 
-- Writes: tracker updates, Gmail drafts, scoring, Gmail sync, insights Re-run
+- Writes: tracker updates, Gmail drafts, scoring on capture, Gmail sync, insights Re-run
 - Direct Gmail or resume-file access
 - An MCP client inside the web app
 - The rest of the Ask assistant catalog (`list_tracker`, `list_top_jobs`, `get_jd_excerpt`, `propose_*`, cost summary)
@@ -395,7 +396,7 @@ Before publishing this project publicly:
 
 Gmail access is read + create drafts; the app cannot send email. Email bodies are fetched on demand and never stored. Only classifications, subjects/senders, and recovered job descriptions are kept in your local Mongo.
 
-The optional MCP server is local stdio only. Any Cursor chat that has it enabled can read compact application rows and the stored insights run. It does not return email bodies, sender addresses, full job descriptions, or credentials, and it cannot write.
+The optional MCP server is local stdio only. Any Cursor chat that has it enabled can read compact application rows and the stored insights run, and can save a pasted JD as a `job_prospects` row. Read tools do not return email bodies, sender addresses, full job descriptions, or credentials. Saving a prospect does not create an application, write the tracker, or spend scoring budget.
 
 This repository is configured so local resume files and common secret/local artifact paths are ignored by git. You are still responsible for reviewing staged files before pushing.
 

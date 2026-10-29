@@ -3,7 +3,7 @@ import type { FetchedPosting } from "./fetchPosting.js";
 import { strictTitleSimilarity } from "./titleMatch.js";
 
 export type MatchLevel = "exact" | "high" | "low" | "none";
-export type EvidenceSource = "email_link" | "email_body" | "ats_board" | "serper" | "manual";
+export type EvidenceSource = "email_link" | "email_body" | "ats_board" | "serper" | "manual" | "prospect";
 
 export type JdMatch = { level: MatchLevel; signals: string[]; roleSimilarity: number };
 

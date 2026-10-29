@@ -146,10 +146,10 @@ export const api = {
       cache: "no-store",
       body: JSON.stringify({ days }),
     }),
-  gmailConfirmCandidate: (key: string, url: string) =>
+  gmailConfirmCandidate: (key: string, pick: { url?: string; prospectId?: string }) =>
     request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(pick),
     }),
   gmailDismissAction: (emailId: string) =>
     request<void>(`/gmail/actions/${encodeURIComponent(emailId)}/dismiss`, { method: "POST" }),

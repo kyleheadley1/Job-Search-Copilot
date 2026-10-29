@@ -9,7 +9,14 @@ export type EvaluationSummary = {
   reason?: string;
   notes?: string[];
   attempts?: Array<{ url: string; source: string; ok: boolean; reason?: string; matchLevel?: MatchLevel }>;
-  candidates?: Array<{ url: string; title?: string; location?: string; matchLevel: MatchLevel; source: string }>;
+  candidates?: Array<{
+    url?: string;
+    prospectId?: string;
+    title?: string;
+    location?: string;
+    matchLevel: MatchLevel;
+    source: string;
+  }>;
   verifiedBy?: "auto" | "user";
   jdTitle?: string;
   recoveredRole?: string;

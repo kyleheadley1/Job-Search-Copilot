@@ -17,11 +17,12 @@ export type RecoveryAttempt = {
 };
 
 /** Which pipeline step surfaced a posting. */
-export type RecoveryStage = "email" | "email_board" | "guessed_board" | "serper_board" | "serper" | "manual";
+export type RecoveryStage = "email" | "email_board" | "guessed_board" | "serper_board" | "serper" | "manual" | "prospect";
 
 /** A recovered posting that wasn't verified automatically; kept so the user can pick it. */
 export type RecoveryCandidate = {
-  url: string;
+  url?: string;
+  prospectId?: string;
   source: EvidenceSource;
   stage?: RecoveryStage;
   matchLevel: MatchLevel;
@@ -164,6 +165,33 @@ export const evaluationsRepository = {
   async upsert(evaluation: ApplicationEvaluation): Promise<void> {
     const col = await this.collection();
     await col.replaceOne({ _id: evaluation.key }, evaluation, { upsert: true });
+  },
+
+  /** Write an evaluation unless a scored row already exists for this key. Never overwrites a score. */
+  async upsertIfUnscored(evaluation: ApplicationEvaluation): Promise<ApplicationEvaluation> {
+    const col = await this.collection();
+    const existing = await col.findOne({ _id: evaluation.key });
+    if (existing?.recovery.status === "scored") return strip(existing);
+    const doc = { ...evaluation, _id: evaluation.key };
+    if (!existing) {
+      try {
+        await col.insertOne(doc);
+        return evaluation;
+      } catch (error) {
+        const code = typeof error === "object" && error && "code" in error ? (error as { code?: number }).code : undefined;
+        if (code !== 11000) throw error;
+        const raced = await col.findOne({ _id: evaluation.key });
+        if (raced?.recovery.status === "scored") return strip(raced);
+      }
+    }
+    const replaced = await col.findOneAndReplace(
+      { _id: evaluation.key, "recovery.status": { $ne: "scored" } },
+      doc,
+      { returnDocument: "after" },
+    );
+    if (replaced) return strip(replaced);
+    const current = await col.findOne({ _id: evaluation.key });
+    return current ? strip(current) : evaluation;
   },
 
   async findByKey(key: string): Promise<ApplicationEvaluation | null> {

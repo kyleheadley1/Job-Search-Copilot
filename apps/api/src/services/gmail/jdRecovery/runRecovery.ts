@@ -60,6 +60,8 @@ import {
   type ScoringDiagnostic,
 } from "./evaluations.repository.js";
 import { fetchPosting, PostingFetchError, type FetchedPosting } from "./fetchPosting.js";
+import { jobProspectsRepository, type JobProspect } from "./jobProspects.repository.js";
+import { matchProspectsToApplication, PROSPECT_MATCH_LOOKBACK_DAYS } from "./prospectMatch.js";
 import { inferCandidateStage } from "./recoveryMetrics.js";
 import { serperClient, serperUsageRepository, type SerperResult, type SerperUsage } from "./serperClient.js";
 import { addMissingApplicationsQuietly } from "../trackerAutoAdd.js";
@@ -332,11 +334,101 @@ export const summarizeBoard = (listing: BoardListing, role: string | null): Boar
   return check;
 };
 
+const prospectCandidate = (prospect: JobProspect): RecoveryCandidate => ({
+  prospectId: prospect.id,
+  url: prospect.sourceUrl,
+  source: "prospect",
+  stage: "prospect",
+  matchLevel: "high",
+  title: prospect.title,
+  company: prospect.company,
+  location: prospect.location,
+  text: prospect.cleanedText.slice(0, MAX_CANDIDATE_TEXT),
+});
+
+const attachProspectAndScore = async (
+  app: GmailApplication,
+  existing: ApplicationEvaluation | undefined,
+  prospect: JobProspect,
+): Promise<{ evaluation: ApplicationEvaluation; triaged: boolean }> => {
+  const now = new Date().toISOString();
+  const base: ApplicationEvaluation =
+    existing ??
+    {
+      key: app.key,
+      company: app.company,
+      role: app.role,
+      appliedAt: app.appliedAt,
+      recoveryVersion: RECOVERY_VERSION,
+      recovery: { status: "unverified", attempts: [], serperQueries: 0, notes: ["prospect_attached"] },
+      outcome: buildOutcome(app),
+      createdAt: now,
+      updatedAt: now,
+    };
+  try {
+    const scored = await scoreUserPosting(
+      base,
+      {
+        text: prospect.cleanedText,
+        url: prospect.sourceUrl,
+        title: prospect.title,
+        company: prospect.company,
+        matchLevel: "high",
+        stage: "prospect",
+      },
+      "prospect_auto_attached",
+    );
+    await jobProspectsRepository.markAttached(prospect.id, app.key);
+    return { evaluation: scored, triaged: true };
+  } catch (error) {
+    if (error instanceof AlreadyScoredError) {
+      const scored = await evaluationsRepository.findByKey(app.key);
+      if (scored) return { evaluation: scored, triaged: false };
+    }
+    const failed: ApplicationEvaluation = {
+      ...base,
+      recovery: {
+        ...base.recovery,
+        status: "fetch_failed",
+        reason: `triage_failed: ${describeError(error)}`,
+        source: "prospect",
+        foundVia: "prospect",
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    return { evaluation: failed, triaged: true };
+  }
+};
+
 /** Recover, verify, and (only when verified) blind-score one application. */
 export const recoverApplication = async (
   app: GmailApplication,
   usage: SerperUsage,
 ): Promise<{ evaluation: ApplicationEvaluation; triaged: boolean }> => {
+  const existing = await evaluationsRepository.findByKey(app.key);
+  if (existing?.recovery.status === "scored") {
+    return { evaluation: existing, triaged: false };
+  }
+
+  const companyKey = normalizeCompany(app.company);
+  const openProspects = companyKey ? await jobProspectsRepository.findOpenByCompanyKey(companyKey) : [];
+  let reviewProspects: JobProspect[] = [];
+  if (openProspects.length > 0) {
+    const companyApps = (await getGmailApplications(PROSPECT_MATCH_LOOKBACK_DAYS)).filter(
+      (row) => normalizeCompany(row.company) === companyKey,
+    );
+    const prospectMatch = matchProspectsToApplication({
+      app,
+      prospects: openProspects,
+      companyApps,
+      requisitionId: app.role ? extractRequisitionId(app.role, "") : undefined,
+    });
+    if (prospectMatch.decision === "auto" && prospectMatch.prospects[0]) {
+      return attachProspectAndScore(app, existing ?? undefined, prospectMatch.prospects[0]);
+    }
+    if (prospectMatch.decision === "review") reviewProspects = prospectMatch.prospects;
+  }
+
   const emails = await fetchEmails(app);
   const evidence = collectEmailEvidence(emails);
   const hints = detectAtsHints(emails);
@@ -357,6 +449,9 @@ export const recoverApplication = async (
   const boardChecks: BoardCheck[] = [];
   const emailText = normalizeForMatch(emails.map((e) => `${e.subject}\n${e.body}`).join("\n"));
   let stage: RecoveryStage = "email";
+  for (const prospect of reviewProspects) {
+    candidates.set(`prospect:${prospect.id}`, prospectCandidate(prospect));
+  }
 
   const verified = () => Boolean(best && isScoreable(best.match.level));
 
@@ -693,7 +788,7 @@ const scoreUserPosting = async (
     matchLevel: MatchLevel;
     stage: RecoveryStage;
   },
-  signal: "user_picked_candidate" | "user_pasted_jd",
+  signal: "user_picked_candidate" | "user_pasted_jd" | "prospect_auto_attached",
 ): Promise<ApplicationEvaluation> => {
   if (evaluation.recovery.status === "scored") {
     throw new AlreadyScoredError(`${evaluation.key} is already scored; scores are final`);
@@ -729,21 +824,26 @@ const scoreUserPosting = async (
     outcomeAtScoring: evaluation.outcome.status,
     updatedAt: now,
   };
-  await evaluationsRepository.upsert(updated);
+  const written = await evaluationsRepository.upsertIfUnscored(updated);
+  if (written.recovery.status === "scored" && written.fit?.scoredAt !== updated.fit?.scoredAt) {
+    return written;
+  }
   await addMissingApplicationsQuietly();
-  return updated;
+  return written;
 };
 
-export const confirmCandidate = async (key: string, url: string): Promise<ApplicationEvaluation> => {
+export const confirmCandidate = async (key: string, identifier: string): Promise<ApplicationEvaluation> => {
   const evaluation = await evaluationsRepository.findByKey(key);
   if (!evaluation) throw new EvaluationNotFoundError(`No evaluation for ${key}`);
-  const candidate = evaluation.recovery.candidates?.find((c) => c.url === url);
-  if (!candidate) throw new EvaluationNotFoundError(`No candidate ${url} for ${key}`);
-  return scoreUserPosting(
+  const candidate = evaluation.recovery.candidates?.find(
+    (c) => c.url === identifier || c.prospectId === identifier,
+  );
+  if (!candidate) throw new EvaluationNotFoundError(`No candidate ${identifier} for ${key}`);
+  const scored = await scoreUserPosting(
     evaluation,
     {
       text: candidate.text,
-      url,
+      url: candidate.url,
       title: candidate.title,
       company: candidate.company,
       matchLevel: "high",
@@ -751,6 +851,8 @@ export const confirmCandidate = async (key: string, url: string): Promise<Applic
     },
     "user_picked_candidate",
   );
+  if (candidate.prospectId) await jobProspectsRepository.markAttached(candidate.prospectId, key);
+  return scored;
 };
 
 export const scorePastedJd = async (key: string, text: string, url?: string): Promise<ApplicationEvaluation> => {
@@ -901,8 +1003,39 @@ export const pendingApplications = (
   apps: GmailApplication[],
   existing: Map<string, ApplicationEvaluation>,
   serperBudgetLeft = true,
-): GmailApplication[] =>
-  newestFirst(apps).filter((a) => needsRecovery(existing.get(a.key), Date.now(), serperBudgetLeft));
+  openProspects: JobProspect[] = [],
+): GmailApplication[] => {
+  const now = Date.now();
+  const prospectsByCompany = new Map<string, JobProspect[]>();
+  for (const prospect of openProspects) {
+    const list = prospectsByCompany.get(prospect.companyKey) ?? [];
+    list.push(prospect);
+    prospectsByCompany.set(prospect.companyKey, list);
+  }
+  const appsByCompany = new Map<string, GmailApplication[]>();
+  for (const app of apps) {
+    const key = normalizeCompany(app.company);
+    const list = appsByCompany.get(key) ?? [];
+    list.push(app);
+    appsByCompany.set(key, list);
+  }
+  return newestFirst(apps).filter((a) => {
+    const evaluation = existing.get(a.key);
+    if (evaluation?.recovery.status === "scored") return false;
+    const companyKey = normalizeCompany(a.company);
+    const companyProspects = prospectsByCompany.get(companyKey) ?? [];
+    if (companyProspects.length > 0) {
+      const match = matchProspectsToApplication({
+        app: a,
+        prospects: companyProspects,
+        companyApps: appsByCompany.get(companyKey),
+        requisitionId: a.role ? extractRequisitionId(a.role, "") : undefined,
+      });
+      if (match.decision !== "none") return true;
+    }
+    return needsRecovery(evaluation, now, serperBudgetLeft);
+  });
+};
 
 /** Room for at least one more job's worth of Serper queries. */
 const hasSerperBudget = (usage: SerperUsage) => usage.queries + MAX_SERPER_QUERIES_PER_JOB <= usage.cap;
@@ -915,7 +1048,8 @@ export const runRecovery = async (
   const apps = await getGmailApplications(days);
   const existing = await loadEvaluations(apps);
   const usage = await serperUsageRepository.get();
-  const todo = pendingApplications(apps, existing, hasSerperBudget(usage)).slice(
+  const openProspects = await jobProspectsRepository.findOpen();
+  const todo = pendingApplications(apps, existing, hasSerperBudget(usage), openProspects).slice(
     0,
     maxPerRun * MAX_PROCESSED_PER_RUN_FACTOR,
   );
@@ -926,7 +1060,7 @@ export const runRecovery = async (
   for (const app of todo) {
     if (triaged >= maxPerRun) break;
     const result = await recoverApplication(app, usage);
-    await evaluationsRepository.upsert(result.evaluation);
+    await evaluationsRepository.upsertIfUnscored(result.evaluation);
     processed += 1;
     if (result.triaged) triaged += 1;
     if (result.evaluation.recovery.status === "scored") scored += 1;
@@ -942,7 +1076,8 @@ export const startRecoveryRun = async (days: number): Promise<{ queued: number; 
   const apps = await getGmailApplications(days);
   const existing = await loadEvaluations(apps);
   const usage = await serperUsageRepository.get();
-  const queued = pendingApplications(apps, existing, hasSerperBudget(usage)).length;
+  const openProspects = await jobProspectsRepository.findOpen();
+  const queued = pendingApplications(apps, existing, hasSerperBudget(usage), openProspects).length;
   if (state.running) return { queued, running: true, started: false };
   if (queued === 0) return { queued, running: false, started: false };
 
