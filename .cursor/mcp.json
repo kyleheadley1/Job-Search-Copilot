@@ -1,18 +1,3 @@
 {
-  "mcpServers": {
-    "job-search-copilot": {
-      "type": "stdio",
-      "command": "/Users/kyleheadley/.nvm/versions/node/v22.14.0/bin/node",
-      "args": [
-        "--import",
-        "/Users/kyleheadley/Job Application Helper/node_modules/tsx/dist/loader.mjs",
-        "/Users/kyleheadley/Job Application Helper/apps/api/src/mcp/stdio.ts"
-      ],
-      "cwd": "/Users/kyleheadley/Job Application Helper",
-      "env": {
-        "MCP_STDIO": "1",
-        "DOTENV_CONFIG_QUIET": "true"
-      }
-    }
-  }
+  "mcpServers": {}
 }
