@@ -8,7 +8,13 @@ const log = (level: "INFO" | "WARN" | "ERROR", message: string, meta?: Meta): vo
     timestamp: new Date().toISOString(),
   };
   // Intentionally plain JSON lines for production-friendly parsing.
-  console.log(JSON.stringify(payload));
+  // MCP stdio uses stdout as JSON-RPC; keep those logs on stderr.
+  const line = JSON.stringify(payload);
+  if (process.env.MCP_STDIO === "1") {
+    console.error(line);
+    return;
+  }
+  console.log(line);
 };
 
 export const logger = {

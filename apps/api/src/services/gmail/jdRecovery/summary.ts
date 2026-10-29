@@ -1,3 +1,4 @@
+import { isWeakJobTitle } from "../../../tools/jobPostingMetadataExtract.js";
 import type { StoredResumeType } from "../../../types/resume.js";
 import type { ApplicationStatus, GmailApplication } from "../gmailApplications.js";
 import type { MatchLevel } from "./assessJdMatch.js";
@@ -21,6 +22,15 @@ export type EvaluationSummary = {
   url?: string;
 };
 
+/** Title from the stored/pasted JD when the email never named the role. */
+export const roleFromEvaluation = (e: ApplicationEvaluation): string | null => {
+  for (const raw of [e.jd?.title, e.fit?.detail?.extracted?.title, e.recovery.recoveredRole]) {
+    const title = raw?.trim();
+    if (title && !isWeakJobTitle(title)) return title;
+  }
+  return null;
+};
+
 export const toEvaluationSummary = (e: ApplicationEvaluation): EvaluationSummary => ({
   status: e.recovery.status,
   reason: e.recovery.reason,
@@ -28,7 +38,7 @@ export const toEvaluationSummary = (e: ApplicationEvaluation): EvaluationSummary
   attempts: e.recovery.attempts.slice(0, 10),
   candidates: e.recovery.candidates?.map(({ text: _text, company: _company, ...c }) => c),
   verifiedBy: e.recovery.verifiedBy,
-  jdTitle: e.jd?.title,
+  jdTitle: roleFromEvaluation(e) ?? undefined,
   recoveredRole: e.recovery.recoveredRole,
   boardChecks: e.recovery.boardChecks,
   fitBreakdown: e.fit?.breakdown,
@@ -45,7 +55,8 @@ export const withEvaluations = (
 ): Array<GmailApplication & { evaluation?: EvaluationSummary }> =>
   apps.map((app) => {
     const e = evaluations.get(app.key);
-    return e ? { ...app, evaluation: toEvaluationSummary(e) } : app;
+    if (!e) return app;
+    return { ...app, role: app.role ?? roleFromEvaluation(e), evaluation: toEvaluationSummary(e) };
   });
 
 const OUTCOMES: ApplicationStatus[] = ["applied", "assessment", "interviewing", "rejected", "offer"];

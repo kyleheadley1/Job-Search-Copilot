@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "vitest run src/tests",
+    "mcp": "MCP_STDIO=1 tsx src/mcp/stdio.ts",
     "import:tracker": "tsx scripts/import-tracker-xlsx.mts",
     "verify:tracker": "tsx scripts/verify-tracker-reseed.mts",
     "rescore:tracker": "tsx scripts/rescore-tracker-roles.mts",
@@ -32,6 +33,7 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

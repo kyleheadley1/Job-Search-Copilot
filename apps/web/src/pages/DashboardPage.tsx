@@ -606,6 +606,11 @@ function FitCell({
       {evaluation.recommendedResume && (
         <span className="muted smallText">{evaluation.recommendedResume} resume</span>
       )}
+      {(evaluation.fitBreakdown?.hardGates?.length ?? 0) > 0 && (
+        <span className="muted smallText" title={evaluation.fitBreakdown!.hardGates!.join("\n")}>
+          Hard gate
+        </span>
+      )}
     </div>
   );
 }
@@ -866,10 +871,12 @@ function MetricsCard({ metrics }: { metrics: RecoveryMetrics }) {
 
 function JdMatchCell({
   evaluation,
+  role,
   open,
   onToggle,
 }: {
   evaluation?: EvaluationSummary;
+  role?: string | null;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -881,7 +888,7 @@ function JdMatchCell({
         ? ["You picked", "good"]
         : matchLevel === "exact"
           ? ["Exact (req ID)", "good"]
-          : ["High", "good"]
+          : ["High match", "good"]
       : status === "unverified"
         ? ["Needs your pick", "warn"]
         : status === "fetch_failed"
@@ -898,7 +905,11 @@ function JdMatchCell({
       ) : (
         badge
       )}
-      {status === "scored" && evaluation.jdTitle && <span className="muted smallText">{evaluation.jdTitle}</span>}
+      {status === "scored" &&
+        evaluation.jdTitle &&
+        evaluation.jdTitle.trim().toLowerCase() !== (role ?? "").trim().toLowerCase() && (
+          <span className="muted smallText">{evaluation.jdTitle}</span>
+        )}
       {status !== "scored" && firstNote && <span className="muted smallText">{reasonLabel(firstNote)}</span>}
       {status !== "scored" && evaluation.boardChecks?.[0] && (
         <span className="muted smallText">{boardCheckLabel(evaluation.boardChecks[0])}</span>
@@ -909,6 +920,11 @@ function JdMatchCell({
       {status !== "scored" && (
         <button className="btn-secondary smallText" onClick={onToggle}>
           {open ? "Close" : evaluation.candidates?.length ? `Review (${evaluation.candidates.length})` : "Paste JD"}
+        </button>
+      )}
+      {status === "scored" && (
+        <button type="button" className="btn-secondary smallText" onClick={onToggle}>
+          {open ? "Close" : "Update title"}
         </button>
       )}
     </div>
@@ -980,6 +996,71 @@ function ReviewPanel({
           )}
         </div>
       </div>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function TitlePanel({
+  app,
+  onUpdated,
+}: {
+  app: GmailApplication;
+  onUpdated: (evaluation: EvaluationSummary) => void;
+}) {
+  const [title, setTitle] = useState(app.role ?? app.evaluation?.jdTitle ?? "");
+  const [text, setText] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (id: string, body: { title?: string; text?: string }) => {
+    setBusy(id);
+    setError(null);
+    try {
+      const { evaluation } = await api.gmailUpdateTitle(app.key, body);
+      if (evaluation.jdTitle) setTitle(evaluation.jdTitle);
+      onUpdated(evaluation);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="reviewPanel stack">
+      <span className="muted smallText">
+        Fixes the role label only. The fit score stays as scored.
+      </span>
+      <label className="stack" style={{ gap: "0.25rem" }}>
+        <strong>Title</strong>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Forward Deployed Engineer" />
+      </label>
+      <div>
+        <button disabled={busy !== null || title.trim().length < 2} onClick={() => void run("save", { title })}>
+          {busy === "save" ? "Saving…" : "Save title"}
+        </button>
+      </div>
+      <button type="button" className="btn-secondary smallText" onClick={() => setPasteOpen((o) => !o)}>
+        {pasteOpen ? "Hide paste" : "Or paste the JD to extract the title"}
+      </button>
+      {pasteOpen && (
+        <div className="stack" style={{ gap: "0.4rem" }}>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the full job description" />
+          <div>
+            <button
+              disabled={busy !== null || text.trim().length < MIN_PASTED_JD_CHARS}
+              onClick={() => void run("paste", { text })}
+            >
+              {busy === "paste" ? "Reading…" : "Use title from paste"}
+            </button>
+            {text.trim().length > 0 && text.trim().length < MIN_PASTED_JD_CHARS && (
+              <span className="muted smallText"> At least {MIN_PASTED_JD_CHARS} characters.</span>
+            )}
+          </div>
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
     </div>
   );
@@ -1186,8 +1267,18 @@ export function DashboardPage() {
     }
   };
 
-  const onScored = (key: string, evaluation: EvaluationSummary) => {
-    setApplications((apps) => apps.map((a) => (a.key === key ? { ...a, evaluation } : a)));
+  const onScored = (key: string, evaluation: EvaluationSummary, replaceTitle = false) => {
+    setApplications((apps) =>
+      apps.map((a) =>
+        a.key === key
+          ? {
+              ...a,
+              role: replaceTitle ? (evaluation.jdTitle ?? a.role) : (a.role ?? evaluation.jdTitle ?? a.role),
+              evaluation,
+            }
+          : a,
+      ),
+    );
     setReviewKey(null);
     void loadEvaluations().catch(() => null);
   };
@@ -1390,7 +1481,7 @@ export function DashboardPage() {
                       <tr id={`app-row-${app.key}`}>
                         <td>{app.company}</td>
                         <td>
-                          {app.role ?? <span className="muted">Role not stated</span>}
+                          {app.role ?? app.evaluation?.jdTitle ?? <span className="muted">Role not stated</span>}
                           <details>
                             <summary className="muted smallText">
                               {app.emails.length} email{app.emails.length === 1 ? "" : "s"} · updated{" "}
@@ -1447,6 +1538,7 @@ export function DashboardPage() {
                         <td>
                           <JdMatchCell
                             evaluation={app.evaluation}
+                            role={app.role ?? app.evaluation?.jdTitle}
                             open={reviewKey === app.key}
                             onToggle={() => setReviewKey(reviewKey === app.key ? null : app.key)}
                           />
@@ -1488,7 +1580,11 @@ export function DashboardPage() {
                       {reviewKey === app.key && app.evaluation && (
                         <tr>
                           <td colSpan={7}>
-                            <ReviewPanel app={app} onScored={(e) => onScored(app.key, e)} />
+                            {app.evaluation.status === "scored" ? (
+                              <TitlePanel app={app} onUpdated={(e) => onScored(app.key, e, true)} />
+                            ) : (
+                              <ReviewPanel app={app} onScored={(e) => onScored(app.key, e)} />
+                            )}
                           </td>
                         </tr>
                       )}

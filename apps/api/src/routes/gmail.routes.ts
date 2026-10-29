@@ -18,6 +18,7 @@ import {
   AlreadyScoredError,
   confirmCandidate,
   EvaluationNotFoundError,
+  InvalidTitleError,
   NoStoredJdError,
   runScoringDiagnostic,
   toScoringReport,
@@ -27,6 +28,8 @@ import {
   pendingApplications,
   scorePastedJd,
   startRecoveryRun,
+  updateApplicationTitle,
+  updateApplicationTitleFromJdText,
 } from "../services/gmail/jdRecovery/runRecovery.js";
 import {
   buildCostSummary,
@@ -242,6 +245,10 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
     res.status(409).json({ error: "no_jd", message: error.message });
     return true;
   }
+  if (error instanceof InvalidTitleError) {
+    res.status(400).json({ error: "invalid_title", message: error.message });
+    return true;
+  }
   return false;
 };
 
@@ -307,6 +314,26 @@ gmailRouter.post("/evaluations/:key/jd", async (req, res, next) => {
   try {
     const { text, url } = PasteBodySchema.parse(req.body ?? {});
     const evaluation = await scorePastedJd(req.params.key, text, url);
+    res.json({ evaluation: toEvaluationSummary(evaluation) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+const TitleBodySchema = z
+  .object({
+    title: z.string().trim().min(2).max(200).optional(),
+    text: z.string().trim().min(MIN_PASTED_JD_CHARS).max(50_000).optional(),
+  })
+  .refine((b) => Boolean(b.title || b.text), { message: "Provide a title or paste the JD" });
+
+gmailRouter.post("/evaluations/:key/title", async (req, res, next) => {
+  try {
+    const { title, text } = TitleBodySchema.parse(req.body ?? {});
+    const evaluation = title
+      ? await updateApplicationTitle(req.params.key, title)
+      : await updateApplicationTitleFromJdText(req.params.key, text!);
     res.json({ evaluation: toEvaluationSummary(evaluation) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;

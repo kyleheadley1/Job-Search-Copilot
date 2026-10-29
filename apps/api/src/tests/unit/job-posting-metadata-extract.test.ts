@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractCompanyName,
   extractJobPostingMetadata,
+  isWeakJobTitle,
   scoreCompanyCandidates,
   validateExtractedCompany,
 } from "../../tools/jobPostingMetadataExtract.js";
@@ -210,6 +211,15 @@ You can take a fuzzy problem and turn it into a shipped solution with minimal ha
 `.trim();
 
 describe("job posting metadata extract (Simplify-style)", () => {
+  it("rejects About-the-company headings as job titles", () => {
+    expect(isWeakJobTitle("About Assembled")).toBe(true);
+    expect(isWeakJobTitle("About the company")).toBe(true);
+    expect(isWeakJobTitle("Software Engineer, Platform")).toBe(false);
+    expect(extractJobPostingMetadata("About Assembled\nWe build customer support software.\n".repeat(8)).jobTitle).not.toBe(
+      "About Assembled",
+    );
+  });
+
   it("case 1: GreenLite contract role", () => {
     const meta = extractJobPostingMetadata(CASE_1);
     expect(meta.companyName).toBe("GreenLite");

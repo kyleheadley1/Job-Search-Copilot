@@ -202,8 +202,29 @@ Optional, by feature:
 - Extension build: `npm run build:extension` (or `npm run dev:extension` to rebuild on change)
 - Build API + web: `npm run build`
 - API tests: `npm test`
+- Optional MCP server (Cursor): `npm run mcp`
 
 Scripts run with `tsx`. If `npx tsx` is blocked in your environment, use `node --import tsx <file>`.
+
+### Optional: MCP for Cursor
+
+A local, read-only MCP server exposes `list_applications`, `get_application_details`, and `get_application_insights`. It reuses the API's Mongo data (already-synced applications and the stored insights run). It does not call Gmail, write tracker rows, or spend LLM budget.
+
+Trust model: the same as `npm run dev` on this machine. Cursor launches the process as your OS user; it loads the root `.env` and `MONGO_URI` / `MONGO_DB_NAME`. There is no extra login or API token.
+
+Example `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "job-search-copilot": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "env": { "MCP_STDIO": "1" }
+    }
+  }
+}
+```
 
 ## G. Mongo Setup
 
@@ -356,6 +377,8 @@ Before publishing this project publicly:
 - Always commit only `.env.example` (never real keys).
 
 Gmail access is read + create drafts; the app cannot send email. Email bodies are fetched on demand and never stored. Only classifications, subjects/senders, and recovered job descriptions are kept in your local Mongo.
+
+The optional MCP server is local stdio only. Any Cursor chat that has it enabled can read compact application rows and stored insights. It does not return email bodies, sender addresses, full job descriptions, or credentials.
 
 This repository is configured so local resume files and common secret/local artifact paths are ignored by git. You are still responsible for reviewing staged files before pushing.
 

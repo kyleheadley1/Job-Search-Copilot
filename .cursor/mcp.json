@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "job-search-copilot": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "env": {
+        "MCP_STDIO": "1"
+      }
+    }
+  }
+}

@@ -130,14 +130,17 @@ import {
   buildSerperQueries,
   confirmCandidate,
   EvaluationNotFoundError,
+  InvalidTitleError,
   scorePastedJd,
+  updateApplicationTitle,
+  updateApplicationTitleFromJdText,
   RECOVERY_VERSION,
   rankSerperResults,
   recoverApplication,
   runRecovery,
   runScoringDiagnostic,
 } from "../../services/gmail/jdRecovery/runRecovery.js";
-import { buildRubricSummary } from "../../services/gmail/jdRecovery/summary.js";
+import { buildRubricSummary, withEvaluations } from "../../services/gmail/jdRecovery/summary.js";
 
 const day = (n: number) => new Date(Date.UTC(2026, 8, n)).toISOString();
 
@@ -635,6 +638,8 @@ describe("JD recovery runner", () => {
 
     const e = await scorePastedJd("fig::osd", LONG, "https://figma.com/careers/1");
     expect(e.recovery).toMatchObject({ status: "scored", verifiedBy: "user", match: { signals: ["user_pasted_jd"] } });
+    expect(e.role).toBe("Open Source Developer");
+    expect(e.jd?.title).toBe("Software Engineer");
 
     vi.mocked(triageJob).mockClear();
     await runRecovery(30, 5);
@@ -662,6 +667,102 @@ describe("JD recovery runner", () => {
     const moved = state.evaluations.get("fig::open source developer")!;
     expect(moved.fit!.total).toBe(scoredFit);
     expect(moved.outcome.status).toBe("rejected");
+  });
+
+  it("takes the extracted title from a pasted JD when the email never named the role", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "lum::", company: "Lumos", role: null, appliedDay: 28 });
+    await runRecovery(30, 5);
+    const e = await scorePastedJd("lum::", LONG);
+    expect(e.role).toBe("Software Engineer");
+    expect(e.jd?.title).toBe("Software Engineer");
+    const [row] = withEvaluations(state.apps, new Map([[e.key, e]]));
+    expect(row!.role).toBe("Software Engineer");
+    expect(row!.evaluation?.jdTitle).toBe("Software Engineer");
+  });
+
+  it("fills a missing role from a stored extraction when the email still has none", () => {
+    const app = {
+      key: "asm::",
+      company: "Assembled",
+      role: null,
+      appliedAt: day(28),
+      appliedAtKnown: true,
+      appliedAtSource: "email",
+      status: "applied",
+      furthestStage: "applied",
+      interviewRounds: [],
+      activelyInterviewing: false,
+      lastUpdateAt: day(28),
+      emails: [],
+    } as GmailApplication;
+    const evaluation = {
+      key: "asm::",
+      company: "Assembled",
+      role: null,
+      appliedAt: day(28),
+      recovery: { status: "scored", attempts: [], serperQueries: 0, verifiedBy: "user" },
+      jd: { text: LONG, textHash: "x" },
+      fit: { total: 72, detail: { extracted: { title: "Customer Engineer" } } },
+      outcome: { status: "applied", updatedAt: "", history: [] },
+    } as unknown as ApplicationEvaluation;
+    const [row] = withEvaluations([app], new Map([["asm::", evaluation]]));
+    expect(row!.role).toBe("Customer Engineer");
+  });
+
+  it("does not treat an About-the-company heading as the role", () => {
+    const app = {
+      key: "asm::",
+      company: "Assembled",
+      role: null,
+      appliedAt: day(28),
+      appliedAtKnown: true,
+      appliedAtSource: "email",
+      status: "applied",
+      furthestStage: "applied",
+      interviewRounds: [],
+      activelyInterviewing: false,
+      lastUpdateAt: day(28),
+      emails: [],
+    } as GmailApplication;
+    const evaluation = {
+      key: "asm::",
+      role: "About Assembled",
+      jd: { text: LONG, textHash: "x", title: "About Assembled" },
+      fit: { total: 72, detail: { extracted: { title: "About Assembled" } } },
+      recovery: { status: "scored", attempts: [], serperQueries: 0 },
+    } as unknown as ApplicationEvaluation;
+    const [row] = withEvaluations([app], new Map([["asm::", evaluation]]));
+    expect(row!.role).toBeNull();
+  });
+
+  it("updates a scored application's title without changing the fit", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "asm::", company: "Assembled", role: null, appliedDay: 28 });
+    await runRecovery(30, 5);
+    await scorePastedJd("asm::", LONG);
+    const before = state.evaluations.get("asm::")!.fit!.total;
+    const e = await updateApplicationTitle("asm::", "Forward Deployed Engineer");
+    expect(e.role).toBe("Forward Deployed Engineer");
+    expect(e.jd?.title).toBe("Forward Deployed Engineer");
+    expect(e.fit?.total).toBe(before);
+    expect(e.fit?.detail?.extracted.title).toBe("Forward Deployed Engineer");
+  });
+
+  it("extracts a title from a pasted JD without re-scoring", async () => {
+    vi.mocked(serperClient.isConfigured).mockReturnValue(false);
+    addApp({ key: "asm2::", company: "Assembled", role: null, appliedDay: 28 });
+    await runRecovery(30, 5);
+    await scorePastedJd("asm2::", LONG);
+    vi.mocked(triageJob).mockClear();
+    const jd = `Software Engineer, Platform\nAssembled\nSan Francisco, CA\nAbout Assembled\nWe build customer support software.\n${LONG}`;
+    const e = await updateApplicationTitleFromJdText("asm2::", jd);
+    expect(e.role).toBe("Software Engineer, Platform");
+    expect(e.fit?.total).toBe(78);
+    expect(triageJob).not.toHaveBeenCalled();
+    await expect(updateApplicationTitleFromJdText("asm2::", "About Assembled\nWe build things. ".repeat(20))).rejects.toBeInstanceOf(
+      InvalidTitleError,
+    );
   });
 
   it("does not adopt a sibling evaluation for a different role at the same company", async () => {

@@ -14,6 +14,7 @@
     "build:extension": "npm run build --workspace extension",
     "dev:extension": "npm run dev --workspace extension",
     "test": "npm run test --workspace api",
+    "mcp": "npm run mcp --workspace api",
     "eval:seed": "tsx scripts/seed-eval.ts",
     "eval:run": "tsx scripts/eval-regression.ts",
     "rescore:tracker": "npm run rescore:tracker --workspace api",

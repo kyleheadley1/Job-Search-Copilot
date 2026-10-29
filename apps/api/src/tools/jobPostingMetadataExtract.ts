@@ -123,6 +123,7 @@ const isLineUnusableForTitle = (line: string): boolean => {
   if (UPDATED_ON_RE.test(low)) return true;
   if (isEmployeeCountLine(trimmed)) return true;
   if (isRejectedCompanyCandidate(trimmed) && !isTitleLikeLine(trimmed)) return true;
+  if (/^about\b/i.test(trimmed)) return true;
   return false;
 };
 
@@ -331,6 +332,7 @@ export const isWeakJobTitle = (title: string | undefined | null): boolean => {
   if (isNoiseLine(t)) return true;
   if (isLocationPrefixedTitle(t)) return true;
   if (looksLikeLocation(t)) return true;
+  if (/^about\b/i.test(t)) return true;
   if (!ROLE_TITLE_RE.test(t) && t.length < 12) return true;
   return false;
 };

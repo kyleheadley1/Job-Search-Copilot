@@ -167,6 +167,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, url: url || undefined }),
     }),
+  gmailUpdateTitle: (key: string, body: { title?: string; text?: string }) =>
+    request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/title`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   agentPanel: () => request<AgentPanel>("/agent/suggestions", { cache: "no-store" }),
   agentRun: () => request<AgentPanel & { run: AgentRunSummary }>("/agent/run", { method: "POST" }),
   agentApprove: (id: string) =>

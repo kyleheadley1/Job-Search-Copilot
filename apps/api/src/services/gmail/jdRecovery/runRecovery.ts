@@ -1,6 +1,7 @@
 import { triageJob } from "../../../agents/jobAgent/orchestrator.js";
 import { env } from "../../../config/env.js";
 import { computeJdTextHash } from "../../../lib/jdTextHash.js";
+import { extractJobPostingMetadata, isWeakJobTitle } from "../../../tools/jobPostingMetadataExtract.js";
 import { logger } from "../../../lib/logger.js";
 import { withLlmContext } from "../../llm/llmUsage.js";
 import type { JobRecord } from "../../../types/job.js";
@@ -699,8 +700,13 @@ const scoreUserPosting = async (
   }
   const job = await scoreBlind(posting, evaluation.company, evaluation.key);
   const now = new Date().toISOString();
+  const title =
+    [posting.title, job.extracted?.title]
+      .map((t) => t?.trim())
+      .find((t) => t && !isWeakJobTitle(t)) ?? undefined;
   const updated: ApplicationEvaluation = {
     ...evaluation,
+    role: evaluation.role ?? title ?? null,
     recovery: {
       ...evaluation.recovery,
       status: "scored",
@@ -716,8 +722,8 @@ const scoreUserPosting = async (
     jd: {
       text: posting.text,
       textHash: computeJdTextHash(posting.text),
-      title: posting.title,
-      company: posting.company,
+      title,
+      company: posting.company ?? job.extracted?.company,
     },
     fit: fitFromJob(job),
     outcomeAtScoring: evaluation.outcome.status,
@@ -755,6 +761,44 @@ export const scorePastedJd = async (key: string, text: string, url?: string): Pr
     { text: text.trim(), url, matchLevel: "high", stage: "manual" },
     "user_pasted_jd",
   );
+};
+
+export class InvalidTitleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidTitleError";
+  }
+}
+
+/** Change the displayed role title without touching the frozen score. */
+export const updateApplicationTitle = async (key: string, title: string): Promise<ApplicationEvaluation> => {
+  const evaluation = await evaluationsRepository.findByKey(key);
+  if (!evaluation) throw new EvaluationNotFoundError(`No evaluation for ${key}`);
+  const next = title.trim();
+  if (next.length < 2) throw new InvalidTitleError("Title is too short");
+  const now = new Date().toISOString();
+  const fit = evaluation.fit;
+  const updated: ApplicationEvaluation = {
+    ...evaluation,
+    role: next,
+    jd: evaluation.jd ? { ...evaluation.jd, title: next } : evaluation.jd,
+    fit:
+      fit?.detail
+        ? { ...fit, detail: { ...fit.detail, extracted: { ...fit.detail.extracted, title: next } } }
+        : fit,
+    updatedAt: now,
+  };
+  await evaluationsRepository.upsert(updated);
+  return updated;
+};
+
+/** Pull a title from pasted JD text. Does not re-score or replace the stored JD. */
+export const updateApplicationTitleFromJdText = async (key: string, text: string): Promise<ApplicationEvaluation> => {
+  const title = extractJobPostingMetadata(text).jobTitle?.trim();
+  if (!title || isWeakJobTitle(title)) {
+    throw new InvalidTitleError("Couldn't find a job title in that paste. Type the title instead.");
+  }
+  return updateApplicationTitle(key, title);
 };
 
 /** Keep stored outcomes in step with Gmail; never re-scores. */
