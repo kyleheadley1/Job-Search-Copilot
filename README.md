@@ -4,6 +4,34 @@ Production-minded job triage and application-prep assistant for software enginee
 
 This project helps you evaluate postings, decide whether to apply, choose a resume strategy, generate practical application assets, and track what happened after you applied, while keeping hard rules and realism constraints explicit.
 
+## Screenshots
+
+Sample dashboard from a fictional search (placeholder candidate and companies).
+
+### Daily next steps and interviews
+
+![Dashboard with next steps, upcoming interviews, and application counts](docs/screenshots/dashboard-next-steps.jpg)
+
+The dashboard opens on what needs you today: ranked next steps with optional drafts (reply, prep, follow-up, thank-you), a waiting-on-you list with due dates, confirmed interview times, and a funnel of applications in the window. Interview counts one application that reached a screen, not extra rounds. Drafts are created in Gmail only after you approve; nothing is sent.
+
+### Application tracking
+
+![Application table with company, status, fit score, and JD match](docs/screenshots/application-tracking.jpg)
+
+Gmail applications are grouped by company and role. Each row shows current status and furthest stage, a blind fit score, how the job description was matched, and whether the row is on the tracker. Ambiguous postings stay in "Needs your pick" until you confirm; missing postings are marked not found instead of being guessed.
+
+### Application insights
+
+![Application insights coverage table and seniority screening rates](docs/screenshots/application-insights.png)
+
+Insights summarize the decided search so far: how many applications have a fit score, how callbacks break down, and descriptive rates by seniority and degree language on the posting. Recent applications that are still too early to judge are left out. The numbers are a sketch of this search, not a hiring rule.
+
+### Fit, patterns, and scoring adjustments
+
+![Fit-score callback bars, role-type pattern, and a proposed scoring adjustment](docs/screenshots/insights-fit-and-adjustments.jpg)
+
+The same panel checks whether higher fit scores lined up with more callbacks, flags patterns such as specialized AI / FDE roles, and can propose a small scoring adjustment for future roles. Approved adjustments never rewrite existing scores.
+
 ## A. Project Overview
 
 The app ingests job posts (pasted text, URL, or a one-click capture from the Chrome extension), extracts structured data, scores fit conservatively, recommends whether to apply, suggests a resume, and supports on-demand generation of application materials.
