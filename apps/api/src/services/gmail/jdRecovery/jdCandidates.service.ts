@@ -1,8 +1,14 @@
 import { computeJdTextHash } from "../../../lib/jdTextHash.js";
 import { normalizeSourceUrl } from "../../../lib/normalizeSourceUrl.js";
-import { normalizeCompany, type GmailApplication } from "../gmailApplications.js";
+import {
+  normalizeCompany,
+  relatedApplicationsForKey,
+  type GmailApplication,
+} from "../gmailApplications.js";
 import { cleanProspectJd } from "./cleanProspectJd.js";
 import { jdTextLooksComplete } from "./jdCompleteness.js";
+import { buildMatchEvidenceSnapshot } from "./jdMatchEvidence.js";
+import { assessShadowEligibility, type ShadowAssessment } from "./jdShadowEligibility.js";
 import type {
   ApplicationEvaluation,
   JdCompleteness,
@@ -43,6 +49,43 @@ export class CandidatesFullError extends Error {
   }
 }
 
+export type RelatedApplicationHint = {
+  key: string;
+  company: string;
+  role: string | null;
+  appliedAt: string;
+  lastUpdateAt: string;
+  status: string;
+  note: "hint_only_not_a_merge";
+};
+
+export class ApplicationUnresolvedError extends Error {
+  readonly code = "APPLICATION_UNRESOLVED";
+  readonly applicationKey: string;
+  readonly possibleRelatedKeys: RelatedApplicationHint[];
+
+  constructor(applicationKey: string, possibleRelatedKeys: RelatedApplicationHint[]) {
+    super(
+      `No application currently resolves key ${applicationKey}. Queue identity was not merged into any same-company key.`,
+    );
+    this.name = "ApplicationUnresolvedError";
+    this.applicationKey = applicationKey;
+    this.possibleRelatedKeys = possibleRelatedKeys;
+  }
+
+  toResult() {
+    return {
+      status: "application_unresolved" as const,
+      applicationKey: this.applicationKey,
+      duplicate: false,
+      reviewRequired: false as const,
+      scoringEligible: false,
+      possibleRelatedKeys: this.possibleRelatedKeys,
+      note: "Claimed key is not in the current Gmail listing. Same-company keys are hints only and were not merged. Record unresolved_application or temporary_error; do not retry immediately.",
+    };
+  }
+}
+
 export type SubmitJdCandidateInput = {
   applicationKey: string;
   company: string;
@@ -53,21 +96,32 @@ export type SubmitJdCandidateInput = {
   retrievedAt?: string;
   matchEvidence: string[];
   completeness: JdCompleteness;
+  location?: string;
+  requisitionId?: string;
+  datePosted?: string;
+  competingPostings?: Array<{ url: string; title?: string }>;
+  /** 0–100. Stored as Claude-reported only; never used as proof. */
+  claudeConfidence?: number;
 };
 
 export type SubmitJdCandidateResult = {
   applicationKey: string;
-  status: "submitted" | "already_submitted";
+  status: "submitted" | "already_submitted" | "previously_removed" | "previously_rejected" | "application_unresolved";
   duplicate: boolean;
-  reviewRequired: true;
+  reviewRequired: boolean;
   scoringEligible: boolean;
-  completeness: JdCompleteness;
-  claimedCompleteness: JdCompleteness;
-  sourceUrl: string;
-  sourceType: JdSourceType;
-  retrievedAt: string;
-  candidateCount: number;
-  recoveryStatus: ApplicationEvaluation["recovery"]["status"];
+  completeness?: JdCompleteness;
+  claimedCompleteness?: JdCompleteness;
+  sourceUrl?: string;
+  sourceType?: JdSourceType;
+  retrievedAt?: string;
+  candidateCount?: number;
+  recoveryStatus?: ApplicationEvaluation["recovery"]["status"];
+  shadow?: ShadowAssessment;
+  previouslyRemoved?: boolean;
+  removalReason?: RecoveryCandidate["removalReason"];
+  possibleRelatedKeys?: RelatedApplicationHint[];
+  note?: string;
 };
 
 export type MissingJobDescriptionRow = {
@@ -117,7 +171,10 @@ const capEvidence = (items: string[]): string[] =>
     .slice(0, MAX_EVIDENCE_ITEMS)
     .map((item) => item.slice(0, MAX_EVIDENCE_CHARS));
 
-const toMissingRow = (app: GmailApplication, evaluation?: ApplicationEvaluation): MissingJobDescriptionRow => {
+export const toMissingJobDescriptionRow = (
+  app: GmailApplication,
+  evaluation?: ApplicationEvaluation,
+): MissingJobDescriptionRow => {
   const submitted = (evaluation?.recovery.candidates ?? []).filter((c) => c.source === "mcp");
   return {
     applicationKey: app.key,
@@ -148,15 +205,17 @@ export const listMissingJobDescriptions = (
   opts: { offset: number; limit: number; query?: string },
 ): { totalMatched: number; applications: MissingJobDescriptionRow[] } => {
   const q = opts.query?.toLowerCase();
-  const matched = apps.filter((app) => {
-    if (!needsJobDescription(evaluations.get(app.key))) return false;
-    if (!q) return true;
-    return app.company.toLowerCase().includes(q) || (app.role ?? "").toLowerCase().includes(q);
-  });
+  const matched = apps
+    .filter((app) => {
+      if (!needsJobDescription(evaluations.get(app.key))) return false;
+      if (!q) return true;
+      return app.company.toLowerCase().includes(q) || (app.role ?? "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => b.appliedAt.localeCompare(a.appliedAt) || a.key.localeCompare(b.key));
   const page = matched.slice(opts.offset, opts.offset + opts.limit);
   return {
     totalMatched: matched.length,
-    applications: page.map((app) => toMissingRow(app, evaluations.get(app.key))),
+    applications: page.map((app) => toMissingJobDescriptionRow(app, evaluations.get(app.key))),
   };
 };
 
@@ -168,7 +227,13 @@ export const submitJdCandidate = async (
   const apps = await store.getApplications(lookbackDays);
   const app = apps.find((row) => row.key === input.applicationKey);
   if (!app) {
-    throw new EvaluationNotFoundError(`No application with key ${input.applicationKey}`);
+    throw new ApplicationUnresolvedError(
+      input.applicationKey,
+      relatedApplicationsForKey(input.applicationKey, apps).map((row) => ({
+        ...row,
+        note: "hint_only_not_a_merge" as const,
+      })),
+    );
   }
   if (normalizeCompany(input.company) !== normalizeCompany(app.company)) {
     throw new CompanyMismatchError(
@@ -201,6 +266,9 @@ export const submitJdCandidate = async (
     throw new InvalidJdCandidateError("matchEvidence is required");
   }
 
+  const siblings = (existing?.recovery.candidates ?? [])
+    .filter((row) => row.url && row.url !== sourceUrl && row.reviewStatus !== "rejected")
+    .map((row) => ({ url: row.url!, title: row.title }));
   const candidate: RecoveryCandidate = {
     url: sourceUrl,
     source: "mcp",
@@ -208,6 +276,9 @@ export const submitJdCandidate = async (
     matchLevel: "low",
     title,
     company: app.company,
+    location: input.location?.trim() || undefined,
+    requisitionId: input.requisitionId?.trim() || undefined,
+    datePosted: input.datePosted?.trim() || undefined,
     text: cleanedText,
     rawText: originalText.slice(0, MAX_CANDIDATE_TEXT),
     completeness,
@@ -215,12 +286,69 @@ export const submitJdCandidate = async (
     sourceType: input.sourceType,
     retrievedAt,
     matchEvidence,
+    competingPostings: input.competingPostings,
+    claudeConfidence: input.claudeConfidence,
   };
+  candidate.evidenceSnapshot = buildMatchEvidenceSnapshot({
+    applicationKey: app.key,
+    company: app.company,
+    role: app.role,
+    appliedAt: app.appliedAt,
+    appliedAtKnown: app.appliedAtKnown !== false,
+    applicationRequisitionId: existing?.requisitionId,
+    candidate,
+    siblingPostings: siblings,
+    textHash: computeJdTextHash(cleanedText),
+    nowIso: retrievedAt,
+  });
+  const shadow = assessShadowEligibility(candidate.evidenceSnapshot);
 
   const now = new Date().toISOString();
   const current = existing?.recovery.candidates ?? [];
-  const duplicate = current.find((c) => c.source === "mcp" && c.url === sourceUrl);
+  const duplicate = current.find((c) => c.url && (c.url === sourceUrl || normalizeSourceUrl(c.url) === sourceUrl));
   if (duplicate) {
+    if (duplicate.reviewStatus === "removed") {
+      return {
+        applicationKey: app.key,
+        status: "previously_removed",
+        duplicate: true,
+        reviewRequired: false,
+        scoringEligible: false,
+        completeness: duplicate.completeness ?? completeness,
+        claimedCompleteness: input.completeness,
+        sourceUrl,
+        sourceType: duplicate.sourceType ?? input.sourceType,
+        retrievedAt: duplicate.retrievedAt ?? retrievedAt,
+        candidateCount: current.length,
+        recoveryStatus: existing?.recovery.status ?? "unverified",
+        previouslyRemoved: true,
+        removalReason: duplicate.removalReason,
+        note: `This URL was previously removed from review (${duplicate.removalReason ?? "other"}). It was not reactivated. Search for a different posting, or restore it on JD Review.`,
+        shadow: duplicate.evidenceSnapshot
+          ? assessShadowEligibility(duplicate.evidenceSnapshot, { reviewStatus: "removed" })
+          : undefined,
+      };
+    }
+    if (duplicate.reviewStatus === "rejected") {
+      return {
+        applicationKey: app.key,
+        status: "previously_rejected",
+        duplicate: true,
+        reviewRequired: false,
+        scoringEligible: false,
+        completeness: duplicate.completeness ?? completeness,
+        claimedCompleteness: input.completeness,
+        sourceUrl,
+        sourceType: duplicate.sourceType ?? input.sourceType,
+        retrievedAt: duplicate.retrievedAt ?? retrievedAt,
+        candidateCount: current.length,
+        recoveryStatus: existing?.recovery.status ?? "unverified",
+        note: "This URL was previously rejected as the wrong posting. It was not reactivated. Search for a different posting.",
+        shadow: duplicate.evidenceSnapshot
+          ? assessShadowEligibility(duplicate.evidenceSnapshot, { reviewStatus: "rejected" })
+          : undefined,
+      };
+    }
     return {
       applicationKey: app.key,
       status: "already_submitted",
@@ -234,9 +362,11 @@ export const submitJdCandidate = async (
       retrievedAt: duplicate.retrievedAt ?? retrievedAt,
       candidateCount: current.length,
       recoveryStatus: existing?.recovery.status ?? "unverified",
+      shadow: duplicate.evidenceSnapshot ? assessShadowEligibility(duplicate.evidenceSnapshot) : undefined,
     };
   }
-  if (current.length >= MAX_SUBMITTED_CANDIDATES) {
+  const activeCount = current.filter((row) => row.reviewStatus !== "removed" && row.reviewStatus !== "rejected").length;
+  if (activeCount >= MAX_SUBMITTED_CANDIDATES) {
     throw new CandidatesFullError(`Already have ${MAX_SUBMITTED_CANDIDATES} candidates for ${app.key}`);
   }
 
@@ -287,6 +417,7 @@ export const submitJdCandidate = async (
     retrievedAt,
     candidateCount: written.recovery.candidates?.length ?? 1,
     recoveryStatus: written.recovery.status,
+    shadow,
   };
 };
 

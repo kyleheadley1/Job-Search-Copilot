@@ -19,6 +19,7 @@ import {
   findBodySectionStartIndex,
   followsMetadataLabelLine,
   isAfterBodySection,
+  isBodySectionHeaderLine,
   isCompanyCardFollowerLine,
   isPostedTimestampLine,
   isValidCompanyCandidate,
@@ -124,6 +125,9 @@ const isLineUnusableForTitle = (line: string): boolean => {
   if (isEmployeeCountLine(trimmed)) return true;
   if (isRejectedCompanyCandidate(trimmed) && !isTitleLikeLine(trimmed)) return true;
   if (/^about\b/i.test(trimmed)) return true;
+  if (/^what we (build|do|offer)\b/i.test(trimmed)) return true;
+  if (/^why this\b/i.test(trimmed)) return true;
+  if (isBodySectionHeaderLine(trimmed) && !isTitleLikeLine(trimmed)) return true;
   return false;
 };
 
@@ -333,6 +337,9 @@ export const isWeakJobTitle = (title: string | undefined | null): boolean => {
   if (isLocationPrefixedTitle(t)) return true;
   if (looksLikeLocation(t)) return true;
   if (/^about\b/i.test(t)) return true;
+  if (/^what we (build|do|offer)\b/i.test(t)) return true;
+  if (/^why this\b/i.test(t)) return true;
+  if (isBodySectionHeaderLine(t) && !ROLE_TITLE_RE.test(t)) return true;
   if (!ROLE_TITLE_RE.test(t) && t.length < 12) return true;
   return false;
 };

@@ -34,6 +34,16 @@ vi.mock("../../config/mongo.js", async (importOriginal) => {
 vi.mock("../../services/gmail/trackerAutoAdd.js", () => ({
   addMissingApplicationsQuietly: vi.fn(async () => 0),
 }));
+vi.mock("../../services/gmail/jdRecovery/jdRecoveryQueue.service.js", () => ({
+  createLiveJdRecoveryQueueService: () => ({
+    claim: vi.fn(),
+    record: vi.fn(),
+    progress: vi.fn(),
+    syncAfterCandidateSubmitted: vi.fn(async () => undefined),
+    syncAfterReviewChange: vi.fn(async () => undefined),
+  }),
+  hasPendingJdConfirmation: vi.fn(() => false),
+}));
 vi.mock("../../services/gmail/trackerAutoLapse.js", () => ({
   syncTrackerFromGmailQuietly: vi.fn(async () => ({ lapsed: 0, revived: 0 })),
 }));
@@ -108,7 +118,9 @@ vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", () => ({
     findByCompanyKeys: vi.fn(async () => []),
     rekey: vi.fn(),
     listSince: vi.fn(async () => []),
+    listPendingJdReviews: vi.fn(async () => []),
     upsert: vi.fn(),
+    upsertIfUnscored: vi.fn(async (evaluation) => evaluation),
     updateOutcome: vi.fn(),
   },
 }));
@@ -254,7 +266,7 @@ describe("gmail routes", () => {
 
     const since = vi.mocked(gmailMessagesRepository.listApplicationMessagesSince).mock.calls[0]![0];
     const daysBack = (Date.now() - new Date(since).getTime()) / (24 * 3600 * 1000);
-    expect(daysBack).toBeCloseTo(7, 1);
+    expect(daysBack).toBeCloseTo(120, 1);
   });
 
   it("skips already-processed messages on re-sync without calling the LLM", async () => {

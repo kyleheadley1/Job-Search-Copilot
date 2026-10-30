@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateRules } from "../../agents/jobAgent/rules.js";
 import { userProfile } from "../../config/userProfile.js";
 import { extractJdBackendLabel } from "../../lib/capabilityGap.js";
-import { claimableStackFromContexts } from "../../lib/claimableStack.js";
+import { claimableStackFromContexts, deriveClaimableStackFromText } from "../../lib/claimableStack.js";
 import {
   evaluateDisjunctiveLanguageRequirement,
   findLiteralLeadsWithSourceQuote,
@@ -39,7 +39,18 @@ describe("disjunctive language — Fleetio + Cherry + WorldQuant", () => {
 
     it.each(phrasings)("treats as disjunctive: %s", (line) => {
       expect(spanLooksDisjunctive(line)).toBe(true);
-      expect(lineDisjunctiveRequirementSatisfied(line, claimable())).toBe(true);
+    });
+
+    it("Python on the resume satisfies the WorldQuant closed set; JS/TS does not", () => {
+      const worldquant =
+        "Proficiency in at least one general purpose programming language from Python, Java, and C++.";
+      expect(lineDisjunctiveRequirementSatisfied(worldquant, claimable())).toBe(true);
+      expect(
+        lineDisjunctiveRequirementSatisfied(
+          worldquant,
+          deriveClaimableStackFromText("TypeScript React Node.js JavaScript"),
+        ),
+      ).toBe(false);
     });
 
     it("detects WorldQuant multi-line at-least-one / from split", () => {
@@ -61,6 +72,11 @@ describe("disjunctive language — Fleetio + Cherry + WorldQuant", () => {
         expect.arrayContaining(["Python", "Java", "C++"]),
       );
       expect(analyzeStackMismatch(job, claimable()).coreLanguageGap).not.toContain("Java");
+
+      const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+      const tsEval = evaluateDisjunctiveLanguageRequirement(job, tsOnly);
+      expect(tsEval.satisfied).toBe(false);
+      expect(analyzeStackMismatch(job, tsOnly).stackMismatch).toBe(true);
     });
   });
 
@@ -143,6 +159,22 @@ describe("disjunctive language — Fleetio + Cherry + WorldQuant", () => {
       ].join("\n");
       expect(blob).not.toMatch(/Required core language gap:\s*Java|Missing required Java|role leads with Python/i);
       expect(scored.score.total).toBeGreaterThan(50);
+      expect(scored.score.stackFit).toBe(fixture.storedCategoryScores.stackFit);
+    });
+
+    it("does not clear the closed Python/Java/C++ set because React/TypeScript is satisfied", () => {
+      const fixture = loadCalibrationFixture("worldquantFullStackDeveloper");
+      const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+      const disjunctive = evaluateDisjunctiveLanguageRequirement(fixture.extracted, tsOnly);
+      const closed = disjunctive.groups.find((group) =>
+        group.languages.includes("Python") && group.languages.includes("Java"),
+      );
+      expect(closed?.kind).toBe("closed_mandatory_alternatives");
+      expect(closed?.satisfied).toBe(false);
+      expect(disjunctive.satisfied).toBe(false);
+      const mismatch = analyzeStackMismatch(fixture.extracted, tsOnly);
+      expect(mismatch.stackMismatch).toBe(true);
+      expect(mismatch.coreLanguageGap.some((gap) => /python|java|c\+\+/i.test(gap))).toBe(true);
     });
   });
 });

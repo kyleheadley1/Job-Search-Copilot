@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 import {
+  ClaimJdRecoveryBatchInputSchema,
   GetApplicationDetailsInput,
   GetApplicationInsightsInput,
+  GetJdRecoveryProgressInputSchema,
   ListApplicationsInput,
   ListMissingJobDescriptionsInput,
   MCP_MAX_DAYS,
   MCP_TOOL_NAMES,
   MCP_TOOLS,
   McpToolError,
+  RecordJdRecoveryOutcomeInputSchema,
   runMcpTool,
   SubmitJdCandidateInputSchema,
   type McpDeps,
@@ -207,6 +210,10 @@ describe("MCP tool discovery", () => {
       "save_job_prospect",
       "list_missing_job_descriptions",
       "submit_jd_candidate",
+      "claim_next_jd_recovery_batch",
+      "record_jd_recovery_outcome",
+      "get_jd_recovery_progress",
+      "classify_application_posting_kind",
       "list_scored_applications_for_audit",
       "get_scoring_audit_context",
       "propose_scoring_correction",
@@ -242,6 +249,7 @@ describe("MCP tool results", () => {
         lastUpdateAt: "2026-10-02T00:00:00.000Z",
         activelyInterviewing: true,
         fitTotal: 72,
+        postingKind: "unknown",
       },
     ]);
   });
@@ -381,6 +389,7 @@ describe("MCP evaluation provenance", () => {
       "matchLevel",
       "foundVia",
       "matchSignals",
+      "postingKind",
       "jdTitle",
       "fitBreakdown",
       "storedFitTotal",
@@ -422,10 +431,11 @@ describe("MCP evaluation provenance", () => {
 describe("save_job_prospect description", () => {
   it("discloses background recovery, scoring, and tracker sync", () => {
     const tool = MCP_TOOLS.find((entry) => entry.name === "save_job_prospect");
-    expect(tool?.description).toMatch(/background JD recovery/);
-    expect(tool?.description).toMatch(/score the application/);
-    expect(tool?.description).toMatch(/sync the tracker/);
+    expect(tool?.description).toMatch(/background recovery run/);
+    expect(tool?.description).toMatch(/tracker-syncs/);
     expect(tool?.description).toMatch(/recoveryQueued: true/);
+    expect(tool?.description).toMatch(/matchStatus/);
+    expect(tool?.description).toMatch(/matchStatus: scored/);
     expect(tool?.description).not.toMatch(/write the tracker/);
   });
 });
@@ -508,6 +518,27 @@ describe("MCP invalid input", () => {
         confidence: 0.99,
       }),
     ).toThrow(ZodError);
+    expect(
+      SubmitJdCandidateInputSchema.parse({
+        applicationKey: "k",
+        company: "Acme",
+        originalText: "x".repeat(50),
+        sourceUrl: "https://example.com/job",
+        sourceType: "aggregator",
+        matchEvidence: ["title match"],
+        completeness: "full",
+        claudeConfidence: 80,
+        requisitionId: "REQ-1",
+      }),
+    ).toMatchObject({ claudeConfidence: 80, requisitionId: "REQ-1" });
+    expect(() =>
+      RecordJdRecoveryOutcomeInputSchema.parse({
+        applicationKey: "k",
+        outcome: "not_found",
+      }),
+    ).toThrow(ZodError);
+    expect(() => ClaimJdRecoveryBatchInputSchema.parse({ limit: 11 })).toThrow(ZodError);
+    expect(() => GetJdRecoveryProgressInputSchema.parse({ days: MCP_MAX_DAYS + 1 })).toThrow(ZodError);
   });
 });
 
@@ -718,5 +749,136 @@ describe("MCP Phase 3A scoring audit tools", () => {
     await expect(
       runMcpTool("list_scored_applications_for_audit", { userId: "x" }, auditDeps()),
     ).rejects.toBeInstanceOf(ZodError);
+  });
+});
+
+describe("MCP Phase 4A JD recovery queue tools", () => {
+  it("rejects unwired queue tools and extra identity fields", async () => {
+    await expect(runMcpTool("claim_next_jd_recovery_batch", {}, deps())).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+    });
+    await expect(runMcpTool("record_jd_recovery_outcome", {
+      applicationKey: "beta:pm",
+      outcome: "not_found",
+      reason: "No posting",
+    }, deps())).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    await expect(runMcpTool("get_jd_recovery_progress", {}, deps())).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+    });
+    await expect(
+      runMcpTool("classify_application_posting_kind", {
+        applicationKey: "beta:pm",
+        postingKind: "talent_pool_or_event",
+        reason: "Conference talent profile",
+      }, deps()),
+    ).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    await expect(
+      runMcpTool("claim_next_jd_recovery_batch", { userId: "x", sessionId: "session-aaaa" }, deps()),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("claims, records, and summarizes without leaking Gmail secrets or scoring", async () => {
+    const d = deps();
+    const claimed = {
+      sessionId: "session-aaaa",
+      claimed: [
+        {
+          applicationKey: "beta:pm",
+          company: "Beta",
+          title: "PM",
+          appliedAt: "2026-10-01T00:00:00.000Z",
+          queueStatus: "in_progress",
+        },
+      ],
+    };
+    d.claimJdRecoveryBatch = vi.fn(async () => claimed);
+    d.recordJdRecoveryOutcome = vi.fn(async () => ({
+      applicationKey: "beta:pm",
+      recorded: true,
+      completed: false,
+      queueStatus: "not_found",
+    }));
+    d.getJdRecoveryProgress = vi.fn(async () => ({
+      readOnly: true,
+      total: 2,
+      scored: 1,
+      unattempted: 0,
+      inProgress: 0,
+      pendingHumanJdReview: 0,
+      notFoundRetryNotDue: 1,
+      skippedRequiresReview: 0,
+      retryDue: 0,
+      temporaryFailures: 0,
+    }));
+    const batch = await runMcpTool("claim_next_jd_recovery_batch", { sessionId: "session-aaaa" }, d);
+    expect(d.claimJdRecoveryBatch).toHaveBeenCalled();
+    expect(json(batch)).not.toContain("secret@example.com");
+    expect(json(batch)).not.toContain("refresh-secret");
+    expect(json(batch)).not.toContain("FULL JOB DESCRIPTION SECRET");
+    const recorded = await runMcpTool(
+      "record_jd_recovery_outcome",
+      { applicationKey: "beta:pm", outcome: "not_found", reason: "No current posting" },
+      d,
+    );
+    expect(recorded).toMatchObject({ completed: false });
+    const progress = (await runMcpTool("get_jd_recovery_progress", {}, d)) as { scored: number; total: number };
+    expect(progress.scored).toBe(1);
+    expect(progress.total).toBe(2);
+  });
+
+  it("syncs the recovery queue after submit_jd_candidate", async () => {
+    const { d } = (() => {
+      const built = {
+        getApplications: vi.fn(async () => [otherApp]),
+        getEvaluationsByKeys: vi.fn(async () => new Map()),
+        getActiveScoreRevisions: vi.fn(async () => new Map()),
+        getLatestInsightsRun: vi.fn(async () => insightsRun),
+        getUserProfile: vi.fn(() => {
+          throw new Error("unused");
+        }),
+        getResumeContexts: vi.fn(async () => {
+          throw new Error("unused");
+        }),
+        saveJobProspect: vi.fn(async () => {
+          throw new Error("unused");
+        }),
+        proposeScoringCorrection: vi.fn(async () => {
+          throw new Error("unused");
+        }),
+        submitJdCandidate: vi.fn(async () => ({
+          applicationKey: "beta:pm",
+          status: "submitted" as const,
+          duplicate: false,
+          reviewRequired: true as const,
+          scoringEligible: true,
+          completeness: "full" as const,
+          claimedCompleteness: "full" as const,
+          sourceUrl: "https://jobs.example/pm",
+          sourceType: "ats" as const,
+          retrievedAt: "2026-10-29T12:00:00.000Z",
+          candidateCount: 1,
+          recoveryStatus: "unverified" as const,
+        })),
+        syncJdRecoveryQueueAfterCandidate: vi.fn(async () => undefined),
+      };
+      return { d: built as McpDeps };
+    })();
+    await runMcpTool(
+      "submit_jd_candidate",
+      {
+        applicationKey: "beta:pm",
+        company: "Beta",
+        title: "PM",
+        originalText: FULL_JD,
+        sourceUrl: "https://jobs.example/pm",
+        sourceType: "ats",
+        matchEvidence: ["Exact company and title"],
+        completeness: "full",
+      },
+      d,
+    );
+    expect(d.syncJdRecoveryQueueAfterCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({ applicationKey: "beta:pm", status: "submitted" }),
+    );
   });
 });

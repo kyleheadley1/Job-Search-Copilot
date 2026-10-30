@@ -142,27 +142,40 @@ function SuggestionRow({
  * Daily next steps from free rules over Gmail and the tracker, ranked and drafted by a budgeted agent pass.
  * Drafts are never sent; tracker changes only happen on Approve.
  */
-export function NextStepsCard({ onTrackerChanged }: { onTrackerChanged?: () => void }) {
-  const [panel, setPanel] = useState<AgentPanel | null>(null);
+export function NextStepsCard({
+  onTrackerChanged,
+  demoPanel,
+}: {
+  onTrackerChanged?: () => void;
+  demoPanel?: AgentPanel;
+}) {
+  const isDemo = Boolean(demoPanel);
+  const [panel, setPanel] = useState<AgentPanel | null>(demoPanel ?? null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [drafted, setDrafted] = useState<{ title: string; draft: DraftCreated } | null>(null);
 
   const load = useCallback(async () => {
+    if (isDemo) return;
     try {
       setPanel(await api.agentPanel());
       setError(null);
     } catch (e) {
       setError(errorText(e));
     }
-  }, []);
+  }, [isDemo]);
 
   useEffect(() => {
+    if (demoPanel) {
+      setPanel(demoPanel);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [load, demoPanel]);
 
   const refresh = async () => {
+    if (isDemo) return;
     setRunning(true);
     try {
       setPanel(await api.agentRun());
@@ -177,10 +190,12 @@ export function NextStepsCard({ onTrackerChanged }: { onTrackerChanged?: () => v
   const resolve = async (s: AgentSuggestion, action: "approve" | "dismiss") => {
     setBusyId(s.id);
     try {
-      if (action === "approve") await api.agentApprove(s.id);
-      else await api.agentDismiss(s.id);
+      if (!isDemo) {
+        if (action === "approve") await api.agentApprove(s.id);
+        else await api.agentDismiss(s.id);
+      }
       setPanel((p) => p && { ...p, suggestions: p.suggestions.filter((x) => x.id !== s.id) });
-      if (action === "approve" && s.proposedChange) onTrackerChanged?.();
+      if (!isDemo && action === "approve" && s.proposedChange) onTrackerChanged?.();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -202,7 +217,7 @@ export function NextStepsCard({ onTrackerChanged }: { onTrackerChanged?: () => v
             </span>
           )}
           {last && <span>· checked {dueText(last.at)}</span>}
-          <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={running}>
+          <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={running || isDemo}>
             {running ? "Checking…" : "Refresh"}
           </button>
         </span>
@@ -216,7 +231,7 @@ export function NextStepsCard({ onTrackerChanged }: { onTrackerChanged?: () => v
           </a>
         </p>
       )}
-      {panel && panel.enabled && !panel.canCreateDrafts && (
+      {panel && panel.enabled && !panel.canCreateDrafts && !isDemo && (
         <p className="muted smallText">Reconnect Gmail to turn drafts into real Gmail drafts; until then use Copy.</p>
       )}
       {last?.budgetLimited && (

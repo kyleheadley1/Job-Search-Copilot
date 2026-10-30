@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import type { ApplicationEvaluation } from "../../services/gmail/jdRecovery/evaluations.repository.js";
 import {
+  ApplicationUnresolvedError,
   CandidatesFullError,
   CompanyMismatchError,
   classifySubmittedCompleteness,
@@ -12,7 +13,7 @@ import {
   submitJdCandidate,
   type JdCandidateStore,
 } from "../../services/gmail/jdRecovery/jdCandidates.service.js";
-import { AlreadyScoredError, EvaluationNotFoundError } from "../../services/gmail/jdRecovery/runRecovery.js";
+import { AlreadyScoredError } from "../../services/gmail/jdRecovery/runRecovery.js";
 
 const FULL_JD = [
   "Forward Deployed Software Engineer",
@@ -146,6 +147,15 @@ describe("listMissingJobDescriptions", () => {
     expect(page.totalMatched).toBe(3);
     expect(page.applications).toHaveLength(1);
     expect(page.applications[0]?.applicationKey).toBe(intelligems.key);
+    const dated = listMissingJobDescriptions(
+      [
+        app({ key: "old::eng", company: "OldCo", appliedAt: "2026-01-01T00:00:00.000Z" }),
+        app({ key: "new::eng", company: "NewCo", appliedAt: "2026-10-01T00:00:00.000Z" }),
+      ],
+      new Map(),
+      { offset: 0, limit: 10 },
+    );
+    expect(dated.applications.map((row) => row.applicationKey)).toEqual(["new::eng", "old::eng"]);
     const row = listMissingJobDescriptions(apps, evaluations, { offset: 0, limit: 10, query: "flux" }).applications[0];
     expect(row).toMatchObject({
       applicationKey: fluxcap.key,
@@ -205,6 +215,8 @@ describe("submitJdCandidate", () => {
     expect(saved.recovery.candidates![0]!.rawText).toContain("Forward Deployed Software Engineer");
     expect(saved.recovery.candidates![0]!.rawText).toContain("Responsibilities");
     expect(saved.recovery.candidates![0]!.text.length).toBeGreaterThan(40);
+    expect(saved.recovery.candidates![0]!.evidenceSnapshot?.capturedAt).toBeTruthy();
+    expect(result.shadow?.autoConfirmEnabled).toBe(false);
   });
 
   it("marks an Intelligems-style partial aggregator copy ineligible for scoring", async () => {
@@ -285,7 +297,7 @@ describe("submitJdCandidate", () => {
         store,
         120,
       ),
-    ).rejects.toBeInstanceOf(EvaluationNotFoundError);
+    ).rejects.toBeInstanceOf(ApplicationUnresolvedError);
 
     await expect(
       submitJdCandidate(
@@ -329,8 +341,13 @@ describe("submitJdCandidate", () => {
       store,
       120,
     );
+    const frozen = evaluations.get(fluxcap.key)!.recovery.candidates![0]!.evidenceSnapshot;
+    expect(frozen).toBeDefined();
+    expect(frozen?.claude.explanation).toEqual(["exact title"]);
     expect(again).toMatchObject({ status: "already_submitted", duplicate: true, candidateCount: 1 });
     expect(evaluations.get(fluxcap.key)!.recovery.candidates).toHaveLength(1);
+    expect(evaluations.get(fluxcap.key)!.recovery.candidates![0]!.evidenceSnapshot).toEqual(frozen);
+    expect(evaluations.get(fluxcap.key)!.recovery.candidates![0]!.matchEvidence).toEqual(["exact title"]);
 
     await expect(
       submitJdCandidate(
@@ -472,5 +489,62 @@ describe("revalidateSubmittedCandidateCompleteness", () => {
     expect(result.updated).toBe(false);
     expect(result.completeness).toBe("partial");
     expect(evaluations.get(fluxcap.key)!.recovery.candidates![0]!.completeness).toBe("partial");
+  });
+
+  it("upgrades a claimed-full Experience We're Looking For candidate after the heading heuristic is fixed", async () => {
+    const ooma = app({ key: "ooma::software engineer", company: "Ooma", role: "Software Engineer" });
+    const oomaText = [
+      "Software Engineer",
+      "Ooma",
+      "About the Role",
+      "You will own backend services used by the communications platform and ship production features with the team each week.",
+      "What You'll Do",
+      "- Design and implement backend services for the communications platform",
+      "- Collaborate with product and support on customer-facing issues",
+      "Experience We're Looking For",
+      "- Comfortable shipping production software in a collaborative environment",
+      "- Strong communication with product, support, and other engineers",
+      "- Ability to debug systems and take ownership of customer-facing issues",
+      "What We Offer",
+      "$94,000—$120,000 USD",
+    ].join("\n");
+    const seeded = notFound(ooma);
+    seeded.recovery = {
+      ...seeded.recovery,
+      status: "unverified",
+      candidates: [
+        {
+          url: "https://www.builtinboston.com/job/software-engineer/9834227",
+          source: "mcp",
+          stage: "mcp",
+          matchLevel: "high",
+          title: "Software Engineer",
+          company: "Ooma",
+          text: oomaText,
+          rawText: oomaText,
+          completeness: "partial",
+          claimedCompleteness: "full",
+          sourceType: "aggregator",
+        },
+      ],
+    };
+    const { store, evaluations } = storeOf([ooma], [seeded]);
+    const result = await revalidateSubmittedCandidateCompleteness(
+      ooma.key,
+      "https://www.builtinboston.com/job/software-engineer/9834227",
+      store,
+    );
+    expect(result).toMatchObject({
+      updated: true,
+      completeness: "full",
+      scoringEligible: true,
+      reviewRequired: true,
+      recoveryStatus: "unverified",
+    });
+    expect(evaluations.get(ooma.key)!.fit).toBeUndefined();
+    expect(evaluations.get(ooma.key)!.recovery.candidates![0]!.completeness).toBe("full");
+    expect(evaluations.get(ooma.key)!.recovery.status).toBe("unverified");
+    const beforeSnapshot = evaluations.get(ooma.key)!.recovery.candidates![0]!.evidenceSnapshot;
+    expect(beforeSnapshot).toBeUndefined();
   });
 });

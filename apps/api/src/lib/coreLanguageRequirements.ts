@@ -1,7 +1,10 @@
 import type { ExtractedJobData } from "../types/job.js";
 import type { UserProfile } from "../types/userProfile.js";
 import type { ClaimableStack } from "./claimableStack.js";
-import { evaluateDisjunctiveLanguageRequirement } from "./disjunctiveLanguageRequirement.js";
+import {
+  evaluateDisjunctiveLanguageRequirement,
+  languageClearedBySatisfiedDisjunctiveGroup,
+} from "./disjunctiveLanguageRequirement.js";
 import { GO_LANGUAGE_RE, textMentionsGoLanguage } from "./goLanguage.js";
 import { languagePresentInJd } from "./jdLanguagePresence.js";
 import { normalizeText } from "./text.js";
@@ -127,17 +130,9 @@ export function analyzeCoreLanguageRequirement(
 ): CoreLanguageAnalysis {
   const blob = blobForLanguageScan(job);
   const profileBlob = profileLanguageBlob(profile);
-
-  if (claimable) {
-    const disjunctive = evaluateDisjunctiveLanguageRequirement(job, claimable);
-    if (disjunctive.satisfied) {
-      return {
-        language: null,
-        explicitHardRequirement: false,
-        candidateHasProductionLanguage: true,
-      };
-    }
-  }
+  const disjunctive = claimable
+    ? evaluateDisjunctiveLanguageRequirement(job, claimable)
+    : null;
 
   let language: CoreLanguageId | null = null;
   let explicit = false;
@@ -185,6 +180,17 @@ export function analyzeCoreLanguageRequirement(
     if (SOFT_STACK_FRAMING.test(ctx) && !/\b(must|required)\b/i.test(ctx)) {
       explicit = false;
       language = null;
+    }
+  }
+
+  if (disjunctive && language) {
+    const label = language === "java" ? "Java" : language === "go" ? "Go" : "Python";
+    if (languageClearedBySatisfiedDisjunctiveGroup(disjunctive, label)) {
+      return {
+        language: null,
+        explicitHardRequirement: false,
+        candidateHasProductionLanguage: true,
+      };
     }
   }
 

@@ -249,6 +249,26 @@ export const RuleEvaluationSchema = z.object({
     .optional(),
   disjunctiveLanguageRequirementSatisfied: z.boolean().optional().default(false),
   disjunctiveAcceptedLanguages: z.array(z.string()).optional().default([]),
+  disjunctiveLanguageGroups: z
+    .array(
+      z.object({
+        kind: z.enum([
+          "closed_mandatory_alternatives",
+          "disjunctive_mandatory",
+          "conjunctive_mandatory",
+          "illustrative",
+          "preferred",
+          "mixed_stack_inventory",
+          "ambiguous",
+        ]),
+        languages: z.array(z.string()),
+        sourceQuote: z.string(),
+        satisfied: z.boolean(),
+        matchedLabels: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .default([]),
   namedHardRequirementGaps: z.array(z.string()).optional().default([]),
   notes: z.array(z.string()).default([]),
   penaltyVector: z.record(z.string(), z.number()).optional(),

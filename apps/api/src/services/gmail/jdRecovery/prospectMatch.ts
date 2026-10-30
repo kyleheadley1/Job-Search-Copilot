@@ -192,3 +192,69 @@ export const matchProspectsToApplication = (input: {
 
   return { decision: "review", reason, prospects: plausible.map((row) => row.prospect) };
 };
+
+export type ApplicationProspectMatch = {
+  prospectId: string;
+  title: string;
+  status: JobProspect["status"];
+  decision: ProspectMatchDecision;
+  reason: string;
+};
+
+/** Compact prospect linkage for the dashboard. Never includes JD text. */
+export const withProspectLinks = <T extends GmailApplication>(
+  apps: T[],
+  prospects: JobProspect[],
+): Array<T & { prospectMatch?: ApplicationProspectMatch }> => {
+  if (prospects.length === 0) return apps;
+  const byCompany = new Map<string, JobProspect[]>();
+  for (const prospect of prospects) {
+    const list = byCompany.get(prospect.companyKey) ?? [];
+    list.push(prospect);
+    byCompany.set(prospect.companyKey, list);
+  }
+  const appsByCompany = new Map<string, GmailApplication[]>();
+  for (const app of apps) {
+    const key = normalizeCompany(app.company);
+    const list = appsByCompany.get(key) ?? [];
+    list.push(app);
+    appsByCompany.set(key, list);
+  }
+  return apps.map((app) => {
+    const companyKey = normalizeCompany(app.company);
+    const companyProspects = byCompany.get(companyKey) ?? [];
+    if (companyProspects.length === 0) return app;
+    const attached = companyProspects.find((row) => row.status === "attached" && row.attachedKey === app.key);
+    if (attached) {
+      return {
+        ...app,
+        prospectMatch: {
+          prospectId: attached.id,
+          title: attached.title,
+          status: "attached",
+          decision: "auto",
+          reason: "attached",
+        },
+      };
+    }
+    const open = companyProspects.filter((row) => row.status === "open");
+    if (open.length === 0) return app;
+    const match = matchProspectsToApplication({
+      app,
+      prospects: open,
+      companyApps: appsByCompany.get(companyKey),
+    });
+    if (match.decision === "none" || !match.prospects[0]) return app;
+    const prospect = match.prospects[0];
+    return {
+      ...app,
+      prospectMatch: {
+        prospectId: prospect.id,
+        title: prospect.title,
+        status: prospect.status,
+        decision: match.decision,
+        reason: match.reason,
+      },
+    };
+  });
+};

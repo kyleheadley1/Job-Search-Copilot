@@ -58,6 +58,13 @@ export type GmailApplication = {
   trackerTitle?: string;
   suggestedStatus?: JobStatus;
   evaluation?: EvaluationSummary;
+  prospectMatch?: {
+    prospectId: string;
+    title: string;
+    status: "open" | "attached";
+    decision: "auto" | "review" | "none";
+    reason: string;
+  };
 };
 
 export type RecoveryStatus = "scored" | "unverified" | "not_found" | "fetch_failed";
@@ -87,6 +94,12 @@ export type EvaluationSummary = {
     sourceType?: "company_site" | "ats" | "aggregator" | "other";
     retrievedAt?: string;
     matchEvidence?: string[];
+    reviewStatus?: "pending" | "rejected" | "removed";
+    removalReason?: "listing_unavailable" | "no_usable_jd" | "wrong_posting" | "wrong_location" | "other";
+    removedAt?: string;
+    geoOverride?: boolean;
+    requisitionId?: string;
+    datePosted?: string;
   }>;
   verifiedBy?: "auto" | "user";
   jdTitle?: string;
@@ -114,6 +127,8 @@ export type EvaluationSummary = {
   staleRevisionTotal?: number;
   recommendedResume?: ResumeType;
   matchLevel?: MatchLevel;
+  foundVia?: string;
+  matchSignals?: string[];
   url?: string;
 };
 
@@ -329,6 +344,79 @@ export type GmailApplicationsResponse = {
   pendingRecovery: number;
   upcomingInterviews?: UpcomingInterview[];
   actionItems?: ActionItem[];
+};
+
+export type ShadowRecommendation = "eligible_for_auto_confirmation" | "manual_review" | "reject_mismatch";
+
+export type ShadowAssessment = {
+  recommendation: ShadowRecommendation;
+  blockers: string[];
+  positives: string[];
+  unknowns: string[];
+  autoConfirmEnabled: false;
+  notes: string[];
+};
+
+export type JdRemovalReason = "listing_unavailable" | "no_usable_jd" | "wrong_posting" | "wrong_location" | "other";
+
+export type JdReviewQueueItem = {
+  applicationKey: string;
+  company: string;
+  role: string | null;
+  appliedAt: string;
+  candidateId: string;
+  sourceUrl?: string;
+  sourceType?: "company_site" | "ats" | "aggregator" | "other";
+  completeness?: "full" | "partial";
+  claimedCompleteness?: "full" | "partial";
+  matchEvidence?: string[];
+  evidence: {
+    capturedAt: string;
+    signals: Record<string, { verdict: string; provenance: string; applicationValue?: string; candidateValue?: string; note?: string }>;
+    claude: { explanation: string[]; confidence?: number };
+  };
+  shadow: ShadowAssessment;
+  liveShadow: ShadowAssessment;
+  retrievedAt?: string;
+  pendingCandidateCount: number;
+  candidateLocation?: string;
+  availability?: string;
+  availabilityLabel?: string;
+  geo?: {
+    status: "compatible" | "incompatible" | "needs_review" | "unknown";
+    reason: string;
+    provenance: string;
+    workArrangement?: string;
+    candidateLocation?: string;
+    neighborhoodZone?: string;
+    commute?: { totalMinutes?: number; classification: string };
+    excludedFromDefaultReview?: boolean;
+  };
+  reviewStatus?: "pending" | "rejected" | "removed";
+  removalReason?: JdRemovalReason;
+  removedAt?: string;
+  exclusionReason?: string;
+  queueGroup?: "active" | "excluded";
+};
+
+export type JdReviewQueueResponse = {
+  allTime: true;
+  total: number;
+  reviews: JdReviewQueueItem[];
+  excluded?: JdReviewQueueItem[];
+};
+
+export type JdShadowReport = {
+  shadowMode: true;
+  autoConfirmEnabled: false;
+  reviewed: number;
+  shadowEligible: number;
+  eligibleConfirmed: number;
+  eligibleRejectedOrCorrected: number;
+  falsePositives: number;
+  falseNegatives: number;
+  disagreementReasons: Array<{ reason: string; count: number }>;
+  limitation: string;
 };
 
 export type RecoveryStart = { queued: number; running: boolean; started: boolean };

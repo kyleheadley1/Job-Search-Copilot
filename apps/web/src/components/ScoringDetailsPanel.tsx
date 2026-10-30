@@ -27,7 +27,13 @@ const FAVORABLE_FLAGS = new Set([
 ]);
 
 /** Shown in their own sections below. */
-const SECTIONED_RULE_KEYS = new Set(["notes", "hardRuleNotes", "hardRuleFlags", "penaltyVector"]);
+const SECTIONED_RULE_KEYS = new Set([
+  "notes",
+  "hardRuleNotes",
+  "hardRuleFlags",
+  "penaltyVector",
+  "disjunctiveLanguageGroups",
+]);
 
 const humanize = (key: string) =>
   key

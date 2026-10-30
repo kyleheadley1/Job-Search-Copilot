@@ -15,6 +15,7 @@ import {
 import {
   findLiteralLeadsWithSourceQuote,
   languageOnlyInDisjunctiveChoice,
+  languageOnlyInIllustrativeExample,
 } from "./disjunctiveLanguageRequirement.js";
 import { normalizeText } from "./text.js";
 
@@ -104,6 +105,7 @@ export const extractJdBackendLabel = (job: ExtractedJobData): string | undefined
     if (languageOnlyInDisjunctiveChoice(job, "Python")) return undefined;
     const base = fromRequired.split("/")[0]!.trim();
     if (languageOnlyInDisjunctiveChoice(job, base)) return undefined;
+    if (languageOnlyInIllustrativeExample(job, base)) return undefined;
     return fromRequired;
   }
 

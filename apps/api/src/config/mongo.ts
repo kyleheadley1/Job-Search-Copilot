@@ -43,6 +43,9 @@ const ensureIndexes = async (targetDb: Db): Promise<void> => {
     targetDb.collection("job_prospects").createIndex({ cleanedTextHash: 1, companyKey: 1 }),
     targetDb.collection("score_revisions").createIndex({ applicationKey: 1, createdAt: -1 }),
     targetDb.collection("score_revisions").createIndex({ activeApplicationKey: 1 }, { unique: true, sparse: true }),
+    targetDb.collection("jd_recovery_queue").createIndex({ status: 1, nextRetryAt: 1 }),
+    targetDb.collection("jd_recovery_queue").createIndex({ leaseExpiresAt: 1 }),
+    targetDb.collection("jd_recovery_queue").createIndex({ lastAttemptAt: -1 }),
   ]);
   indexesEnsured = true;
 };

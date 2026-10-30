@@ -254,6 +254,14 @@ describe("buildScoringAuditContext", () => {
       ]),
     );
     expect(packet.scoring.recommendationFromScore).toBe("apply");
+    expect(packet.scoring.recommendationBoundary?.cutoffs).toEqual({
+      strong_apply: 80,
+      apply: 65,
+      stretch: 50,
+    });
+    expect(packet.scoring.recommendationBoundary?.recommendation).toBe("apply");
+    expect(packet.scoring.stackPenalty?.combinedStackPressure.note).toMatch(/diagnostic only/i);
+    expect(packet.scoring.total).toBe(72);
     expect(packet.scoring.evaluationFingerprint).toBe(evaluationFingerprint(evaluation));
     expect(packet.scoring.evaluationFingerprint).not.toBe(packet.jobDescription.textHash);
     expect(packet.candidate.recommendedResumeEvidence?.rawText).toContain("TypeScript");
@@ -263,5 +271,110 @@ describe("buildScoringAuditContext", () => {
     expect(JSON.stringify(packet)).not.toContain("attempt-secret.example");
     expect(JSON.stringify(packet)).not.toContain("internal_note_secret");
     expect(AUDIT_PROTOCOL.readOnly).toBe(true);
+  });
+
+  it("does not imply a stack-mismatch clamp for a Ro-style stored evaluation that never clamped", () => {
+    const evaluation = scored({
+      key: "ro::ai engineer",
+      company: "Ro",
+      role: "AI Engineer",
+      jd: {
+        text: "Ro — AI Engineer\nStrong Python and experience shipping LLM/RAG systems.",
+        textHash: "ro-hash",
+        title: "AI Engineer",
+        company: "Ro",
+      },
+      fit: {
+        total: 80,
+        recommendation: "strong_apply",
+        recommendedResume: "BASE",
+        scoredAt: "2026-10-02T00:00:00.000Z",
+        promptVersion: "jd-recovery-v1:base-ai",
+        breakdown: {
+          categories: { stackFit: 16, levelFit: 15, functionalOverlap: 15 },
+          capability: 86,
+          survivability: 0.58,
+          gapDock: 5,
+          hardGates: [],
+          topMatch: "Python LLM work",
+          mainRisk: "years",
+        },
+        detail: {
+          recommendation: "strong_apply",
+          recommendedResume: "BASE",
+          topMatch: "Python LLM work",
+          mainRisk: "years",
+          rationale: [],
+          risks: [],
+          resumeRationale: [],
+          extracted: {
+            company: "Ro",
+            title: "AI Engineer",
+            stack: ["Python"],
+            requiredSkills: ["Python"],
+            preferredSkills: [],
+            domainTags: [],
+            requirements: ["Strong Python and experience shipping LLM/RAG systems"],
+            rawText: "Ro — AI Engineer\nStrong Python and experience shipping LLM/RAG systems.",
+          },
+          rules: {
+            stackMismatch: false,
+            coreLanguageGap: [],
+            specializationGap: {
+              kind: "backend_stack",
+              name: "Python backend",
+              evidence: "Role leads with Python",
+              severity: "moderate",
+              lever: "upskill",
+              dock: 5,
+              jdSide: "Python",
+            },
+            roleLane: "product_backend",
+          },
+          score: {
+            stackFit: 16,
+            levelFit: 15,
+            domainFit: 8,
+            resumeStoryClarity: 9,
+            functionalOverlap: 15,
+            recruiterFriendliness: 12,
+            careerValue: 9,
+            total: 80,
+            capability: 86,
+            llmCategories: {
+              stackFit: 16,
+              levelFit: 15,
+              domainFit: 8,
+              resumeStoryClarity: 9,
+              functionalOverlap: 15,
+              recruiterFriendliness: 12,
+              careerValue: 9,
+            },
+            scoreDisplay: {
+              capability: 86,
+              survivability: 0.58,
+              final: 80,
+              survAdjustment: -1,
+              gapDock: 5,
+              scoreDerivation: "86 + (-1) − 5 = 80",
+              scoreBand: "strong_apply",
+              bandHeadline: "Strong apply",
+              hardGates: [],
+            },
+          },
+        },
+      },
+    } as ApplicationEvaluation);
+    const packet = buildScoringAuditContext({
+      app: app({ key: "ro::ai engineer", company: "Ro", role: "AI Engineer" }),
+      evaluation,
+      profile: exampleUserProfile,
+      resumeContexts: resumes,
+    });
+    expect(packet.scoring.total).toBe(80);
+    expect(packet.scoring.stackPenalty?.originalLlmStackFit).toBe(16);
+    expect(packet.scoring.stackPenalty?.adjustedStackFit).toBe(16);
+    expect(packet.scoring.stackPenalty?.stackMismatchClampApplied).toBe(false);
+    expect(packet.scoring.stackPenalty?.specializationGap?.dock).toBe(5);
   });
 });

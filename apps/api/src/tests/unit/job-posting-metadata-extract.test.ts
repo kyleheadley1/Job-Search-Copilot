@@ -371,4 +371,82 @@ describe("job posting metadata extract (Simplify-style)", () => {
     expect(presented.listingCompanyName).toBe("Rollout");
     expect(presented.companyDisplayName).not.toBe("This Role");
   });
+
+  it("keeps Plaid/Patreon as employers and NYT team names in the title", () => {
+    const plaid = extractJobPostingMetadata(`
+Full Stack Software Engineer, Plaid
+$176.4-243.6k
+Offers Equity
+Junior and Mid level
+
+Plaid
+Data network powering financial connectivity.
+`.trim());
+    expect(plaid.companyName).toBe("Plaid");
+    expect(plaid.jobTitle).toBe("Full Stack Software Engineer");
+
+    const patreon = extractJobPostingMetadata(`
+Fullstack Engineer, Patreon
+Creator Home
+$189-255.5k
+
+Patreon
+Funding platform for creatives
+`.trim());
+    expect(patreon.companyName).toBe("Patreon");
+    expect(patreon.jobTitle).toBe("Fullstack Engineer");
+
+    const nyt = extractJobPostingMetadata(`
+Software Engineer, Reflections
+The New York Times
+New York, NY
+Product
+Interactive News
+`.trim());
+    expect(nyt.jobTitle).toBe("Software Engineer, Reflections");
+    expect(nyt.companyName).toBe("The New York Times");
+    expect(nyt.companyName).not.toBe("Product");
+  });
+
+  it("rejects section-header company/title leaks for Rippling, Afresh, and Petfolk", () => {
+    expect(isWeakJobTitle("What We Build")).toBe(true);
+    expect(isWeakJobTitle("Why This")).toBe(true);
+    expect(isWeakJobTitle("About Petfolk")).toBe(true);
+
+    const rippling = extractJobPostingMetadata(`
+What We Build
+Software Engineer, Platform
+Rippling
+Rippling
+51-200 employees
+Build product infrastructure in a backend language (e.g., Python/Go).
+`.trim());
+    expect(rippling.jobTitle).toBe("Software Engineer, Platform");
+    expect(rippling.jobTitle).not.toBe("What We Build");
+    expect(rippling.companyName).toBe("Rippling");
+
+    const afresh = extractJobPostingMetadata(`
+Software Engineer
+Afresh
+Afresh
+51-200 employees
+Why This
+Why This Job is a Match
+Full Job Posting
+`.trim());
+    expect(afresh.companyName).toBe("Afresh");
+    expect(afresh.companyName).not.toBe("Why This");
+    expect(afresh.jobTitle).toBe("Software Engineer");
+
+    const petfolk = extractJobPostingMetadata(`
+About Petfolk
+Petfolk
+Software Engineer
+Remote
+We're hiring a software engineer to build clinic tools for veterinary care.
+`.trim());
+    expect(petfolk.jobTitle).toBe("Software Engineer");
+    expect(petfolk.jobTitle).not.toBe("About Petfolk");
+    expect(petfolk.companyName).toBe("Petfolk");
+  });
 });

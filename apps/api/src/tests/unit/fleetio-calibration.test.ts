@@ -90,8 +90,10 @@ describe("Fleetio Marketplace — tag provenance & disjunctive stack", () => {
     expect(scored.rules.disjunctiveLanguageRequirementSatisfied).toBe(true);
 
     const breakdown = computeCapabilityBreakdown(scored.score);
-    expect(breakdown.stackFit).toBeGreaterThanOrEqual(28);
-    expect(scored.score.total).toBeGreaterThan(75);
+    // LLM stackFit 13 is preserved; a satisfied and/or group must not floor to 17.
+    expect(scored.score.stackFit).toBe(rawFixture.storedCategoryScores.stackFit);
+    expect(breakdown.stackFit).toBeGreaterThanOrEqual(22);
+    expect(scored.score.total).toBeGreaterThan(63);
 
     const display = buildScoreDisplay({
       score: scored.score,

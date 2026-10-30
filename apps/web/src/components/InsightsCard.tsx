@@ -278,26 +278,33 @@ function AdjustmentRow({
 }
 
 /** Callback patterns across tracker and Gmail; `children` is the older fit-by-outcome detail. */
-export function InsightsCard({ children }: { children?: ReactNode }) {
-  const [panel, setPanel] = useState<InsightsPanel | null>(null);
+export function InsightsCard({ children, demoPanel }: { children?: ReactNode; demoPanel?: InsightsPanel }) {
+  const isDemo = Boolean(demoPanel);
+  const [panel, setPanel] = useState<InsightsPanel | null>(demoPanel ?? null);
   const [running, setRunning] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (isDemo) return;
     try {
       setPanel(await api.insightsPanel());
       setError(null);
     } catch (e) {
       setError(errorText(e));
     }
-  }, []);
+  }, [isDemo]);
 
   useEffect(() => {
+    if (demoPanel) {
+      setPanel(demoPanel);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [load, demoPanel]);
 
   const rerun = async () => {
+    if (isDemo) return;
     setRunning(true);
     try {
       setPanel(await api.insightsRun());
@@ -312,6 +319,17 @@ export function InsightsCard({ children }: { children?: ReactNode }) {
   const act = async (a: ScoringAdjustment, action: "approve" | "dismiss" | "disable") => {
     setBusyId(a.id);
     try {
+      if (isDemo) {
+        const status = action === "approve" ? "approved" : action === "dismiss" ? "dismissed" : "disabled";
+        setPanel(
+          (p) =>
+            p && {
+              ...p,
+              adjustments: p.adjustments.map((x) => (x.id === a.id ? { ...x, status, updatedAt: new Date().toISOString() } : x)),
+            },
+        );
+        return;
+      }
       const { adjustment } = await api.insightsAdjustment(a.id, action);
       setPanel((p) => p && { ...p, adjustments: p.adjustments.map((x) => (x.id === a.id ? adjustment : x)) });
     } catch (e) {
@@ -339,7 +357,7 @@ export function InsightsCard({ children }: { children?: ReactNode }) {
             </span>
           )}
           {run && <span>· analyzed {shortDate(run.generatedAt)}</span>}
-          <button type="button" className="btn-secondary" onClick={() => void rerun()} disabled={running || panel?.running}>
+          <button type="button" className="btn-secondary" onClick={() => void rerun()} disabled={running || panel?.running || isDemo}>
             {running ? "Analyzing…" : "Re-run"}
           </button>
         </span>

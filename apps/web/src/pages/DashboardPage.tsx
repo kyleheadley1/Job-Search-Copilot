@@ -12,6 +12,18 @@ import {
 import { InsightsCard } from "../components/InsightsCard";
 import { NextStepsCard } from "../components/NextStepsCard";
 import { ScoringDetailsPanel } from "../components/ScoringDetailsPanel";
+import {
+  DEMO_ACTIONS,
+  DEMO_APPLICATIONS,
+  DEMO_BRIEFS,
+  DEMO_CANDIDATE,
+  DEMO_EVALUATIONS,
+  DEMO_INSIGHTS,
+  DEMO_NEXT_STEPS,
+  DEMO_PENDING_RECOVERY,
+  DEMO_STATUS,
+  DEMO_UPCOMING,
+} from "../demo/demoDashboardData";
 import type {
   ActionItem,
   ActionType,
@@ -185,9 +197,10 @@ const reachedInterview = (app: GmailApplication) =>
   (app.interviewRounds?.length ?? 0) > 0 || app.furthestStage === "interviewing" || app.furthestStage === "offer";
 
 const STATUS_CARD_HINT: Record<ApplicationStatus, string> = {
-  applied: "Applied, no response beyond the confirmation yet",
+  applied: "Applications in this window (the denominator for the other cards)",
   assessment: "Latest step is an assessment",
-  interviewing: "Reached at least one interview, whatever happened after (includes later rejections)",
+  interviewing:
+    "Applications that reached at least one interview. One per application; later rounds don't add.",
   rejected: "Rejected at any stage",
   offer: "Received an offer",
 };
@@ -386,18 +399,29 @@ function UpcomingInterviewsCard({
   actions,
   onOpenJd,
   onDismissAction,
+  demoBriefs,
 }: {
   interviews: UpcomingInterview[];
   active: GmailApplication[];
   actions: ActionItem[];
   onOpenJd: (key: string) => void;
   onDismissAction: (emailId: string) => void;
+  demoBriefs?: Record<string, InterviewBriefResponse>;
 }) {
   const now = new Date();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [briefs, setBriefs] = useState<Record<string, BriefState>>({});
 
   const load = async (key: string, regenerate = false) => {
+    if (demoBriefs) {
+      const data = demoBriefs[key];
+      setBriefs((s) =>
+        data
+          ? { ...s, [key]: { loading: false, data } }
+          : { ...s, [key]: { ...s[key], loading: false, error: "Demo brief not available." } },
+      );
+      return;
+    }
     setBriefs((s) => ({ ...s, [key]: { ...s[key], loading: true, error: undefined } }));
     try {
       const data = await api.gmailInterviewBrief(key, regenerate);
@@ -469,14 +493,9 @@ function UpcomingInterviewsCard({
                       </td>
                       <td>
                         {a.summary ?? ACTION_FALLBACK_SUMMARY[a.type]}
-                        <div className="muted smallText">
-                          Waiting {waitingFor(a.receivedAt, now)}
-                          {due && (
-                            <>
-                              {" · "}
-                              <span className={`pill ${due.cls}`}>{due.text}</span>
-                            </>
-                          )}
+                        <div className="waitingMeta muted smallText">
+                          <span>Waiting {waitingFor(a.receivedAt, now)}</span>
+                          {due && <span className={`pill ${due.cls}`}>{due.text}</span>}
                         </div>
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
@@ -589,6 +608,61 @@ function UpcomingInterviewsCard({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function DemoFitBreakdown({ evaluation }: { evaluation: EvaluationSummary }) {
+  const b = evaluation.fitBreakdown;
+  return (
+    <div className="reviewPanel stack">
+      <strong>Scoring details (demo)</strong>
+      <div className="row" style={{ gap: "1.5rem", flexWrap: "wrap" }}>
+        <div>
+          <div className="muted smallText">Final</div>
+          <div style={{ fontSize: "1.6rem", fontWeight: 700 }}>{evaluation.fitTotal}</div>
+        </div>
+        {b?.capability != null && (
+          <div>
+            <div className="muted smallText">Capability</div>
+            <div style={{ fontSize: "1.2rem" }}>{b.capability}</div>
+          </div>
+        )}
+        {b?.survivability != null && (
+          <div>
+            <div className="muted smallText">Survivability</div>
+            <div style={{ fontSize: "1.2rem" }}>{b.survivability}</div>
+          </div>
+        )}
+        {evaluation.recommendation && (
+          <div>
+            <div className="muted smallText">Recommendation</div>
+            <div style={{ fontSize: "1.2rem" }}>{evaluation.recommendation.replace(/_/g, " ")}</div>
+          </div>
+        )}
+      </div>
+      {b?.categories && (
+        <div>
+          <strong className="smallText">Category scores</strong>
+          <ul className="smallText">
+            {Object.entries(b.categories).map(([k, v]) => (
+              <li key={k}>
+                {CATEGORY_LABEL[k] ?? k}: {v}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {b?.topMatch && (
+        <p className="smallText" style={{ margin: 0 }}>
+          <strong>Top match.</strong> {b.topMatch}
+        </p>
+      )}
+      {b?.mainRisk && (
+        <p className="smallText" style={{ margin: 0 }}>
+          <strong>Main risk.</strong> {b.mainRisk}
+        </p>
       )}
     </div>
   );
@@ -891,25 +965,37 @@ function MetricsCard({ metrics }: { metrics: RecoveryMetrics }) {
 }
 
 function JdMatchCell({
+  app,
   evaluation,
   role,
   open,
   onToggle,
 }: {
+  app: GmailApplication;
   evaluation?: EvaluationSummary;
   role?: string | null;
   open: boolean;
   onToggle: () => void;
 }) {
-  if (!evaluation) return <span className="muted">Not checked yet</span>;
-  const { status, matchLevel, url, verifiedBy } = evaluation;
+  if (!evaluation) {
+    if (app.prospectMatch?.decision === "auto") {
+      return <span className="pill info">JD saved — scoring</span>;
+    }
+    if (app.prospectMatch?.decision === "review") {
+      return <span className="pill warn">JD saved — confirm match</span>;
+    }
+    return <span className="muted">Not checked yet</span>;
+  }
+  const { status, matchLevel, url, verifiedBy, foundVia } = evaluation;
   const [label, pill] =
     status === "scored"
       ? verifiedBy === "user"
         ? ["You picked", "good"]
-        : matchLevel === "exact"
-          ? ["Exact (req ID)", "good"]
-          : ["High match", "good"]
+        : foundVia === "prospect"
+          ? ["Saved JD", "good"]
+          : matchLevel === "exact"
+            ? ["Exact (req ID)", "good"]
+            : ["High match", "good"]
       : status === "unverified"
         ? ["Needs your pick", "warn"]
         : status === "fetch_failed"
@@ -985,7 +1071,7 @@ function ReviewPanel({
       {candidates.length > 0 && (
         <div className="stack" style={{ gap: "0.4rem" }}>
           <strong>Is it one of these?</strong>
-          {candidates.map((c) => {
+          {candidates.filter((c) => c.reviewStatus !== "rejected" && c.reviewStatus !== "removed").map((c) => {
             const id = c.prospectId ?? c.url ?? c.title ?? "candidate";
             const label = c.title ?? c.url ?? "Saved prospect";
             const partial = c.completeness === "partial";
@@ -1004,12 +1090,36 @@ function ReviewPanel({
                   <span className="muted smallText"> · {c.matchLevel} match</span>
                   {partial && <span className="muted smallText"> · partial JD, not eligible to score</span>}
                 </span>
-                <button
-                  disabled={busy !== null || partial}
-                  onClick={() => void run(id, () => api.gmailConfirmCandidate(app.key, { url: c.url, prospectId: c.prospectId }))}
-                >
-                  {busy === id ? "Scoring…" : "This is the one"}
-                </button>
+                <div className="rowBetween" style={{ gap: "0.4rem" }}>
+                  {partial && c.url && (
+                    <button
+                      className="btn-secondary"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void run(`revalidate-${id}`, async () => {
+                          const result = await api.gmailRevalidateCandidateCompleteness(app.key, c.url!);
+                          if (!result.evaluation) throw new Error("Completeness recheck did not return an evaluation");
+                          return { evaluation: result.evaluation };
+                        })
+                      }
+                    >
+                      {busy === `revalidate-${id}` ? "Rechecking…" : "Recheck completeness"}
+                    </button>
+                  )}
+                  <button
+                    disabled={busy !== null || partial}
+                    onClick={() => void run(id, () => api.gmailConfirmCandidate(app.key, { url: c.url, prospectId: c.prospectId }))}
+                  >
+                    {busy === id ? "Scoring…" : "This is the one"}
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    disabled={busy !== null}
+                    onClick={() => void run(`reject-${id}`, () => api.gmailRejectCandidate(app.key, { url: c.url, prospectId: c.prospectId }))}
+                  >
+                    {busy === `reject-${id}` ? "Rejecting…" : "Not this one"}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -1108,38 +1218,58 @@ const readWindow = (): WindowDays => {
   return (WINDOW_OPTIONS as readonly number[]).includes(stored) ? (stored as WindowDays) : 7;
 };
 
-export function DashboardPage() {
+export function DashboardPage({ variant = "live" }: { variant?: "live" | "demo" } = {}) {
+  return <DashboardView key={variant} variant={variant} />;
+}
+
+function DashboardView({ variant }: { variant: "live" | "demo" }) {
+  const isDemo = variant === "demo";
+  const isDemoRef = useRef(isDemo);
+  isDemoRef.current = isDemo;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [status, setStatus] = useState<GmailStatus | null>(null);
-  const [applications, setApplications] = useState<GmailApplication[]>([]);
+  const [hideDemoBanner, setHideDemoBanner] = useState(false);
+  const [liveStatus, setStatus] = useState<GmailStatus | null>(() => (isDemo ? DEMO_STATUS : null));
+  const [liveApplications, setApplications] = useState<GmailApplication[]>(() => (isDemo ? DEMO_APPLICATIONS : []));
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [updatingKey, setUpdatingKey] = useState<string | null>(null);
-  const [pendingRecovery, setPendingRecovery] = useState(0);
-  const [upcoming, setUpcoming] = useState<UpcomingInterview[]>([]);
-  const [actions, setActions] = useState<ActionItem[]>([]);
-  const [evaluations, setEvaluations] = useState<EvaluationsResponse | null>(null);
-  const [windowDays, setWindowDays] = useState<WindowDays>(readWindow);
+  const [livePendingRecovery, setPendingRecovery] = useState(isDemo ? DEMO_PENDING_RECOVERY : 0);
+  const [liveUpcoming, setUpcoming] = useState<UpcomingInterview[]>(() => (isDemo ? DEMO_UPCOMING : []));
+  const [liveActions, setActions] = useState<ActionItem[]>(() => (isDemo ? DEMO_ACTIONS : []));
+  const [liveEvaluations, setEvaluations] = useState<EvaluationsResponse | null>(() => (isDemo ? DEMO_EVALUATIONS : null));
+  const [liveWindowDays, setWindowDays] = useState<WindowDays>(isDemo ? 30 : readWindow);
   const [filter, setFilter] = useState<RecoveryFilter>("all");
   const [reviewKey, setReviewKey] = useState<string | null>(null);
   const [scoringKey, setScoringKey] = useState<string | null>(null);
   const autoSynced = useRef(false);
 
+  const status = isDemo ? DEMO_STATUS : liveStatus;
+  const applications = isDemo ? DEMO_APPLICATIONS : liveApplications;
+  const upcoming = isDemo ? DEMO_UPCOMING : liveUpcoming;
+  const actions = isDemo ? DEMO_ACTIONS : liveActions;
+  const evaluations = isDemo ? DEMO_EVALUATIONS : liveEvaluations;
+  const pendingRecovery = isDemo ? DEMO_PENDING_RECOVERY : livePendingRecovery;
+  const windowDays = isDemo ? 30 : liveWindowDays;
+
   const loadEvaluations = useCallback(async () => {
-    const result = await api.gmailEvaluations(windowDays);
+    if (isDemoRef.current) return DEMO_EVALUATIONS;
+    const result = await api.gmailEvaluations(liveWindowDays);
+    if (isDemoRef.current) return DEMO_EVALUATIONS;
     setEvaluations(result);
     return result;
-  }, [windowDays]);
+  }, [liveWindowDays]);
 
   const loadApplications = useCallback(async () => {
+    if (isDemoRef.current) return;
     const { applications: items, pendingRecovery: pending, upcomingInterviews, actionItems } =
-      await api.gmailApplications(windowDays);
+      await api.gmailApplications(liveWindowDays);
+    if (isDemoRef.current) return;
     setApplications(items);
     setPendingRecovery(pending);
     setUpcoming(upcomingInterviews ?? []);
     setActions(actionItems ?? []);
     await loadEvaluations().catch(() => null);
-  }, [windowDays, loadEvaluations]);
+  }, [liveWindowDays, loadEvaluations]);
 
   const afterRecoveryStart = useCallback(
     async (start?: RecoveryStart) => {
@@ -1149,15 +1279,18 @@ export function DashboardPage() {
   );
 
   const runSync = useCallback(async () => {
+    if (isDemoRef.current) return;
     setSyncing(true);
     setNotice(null);
     try {
-      const result = await api.gmailSync(windowDays);
+      const result = await api.gmailSync(liveWindowDays);
+      if (isDemoRef.current) return;
       setApplications(result.applications);
       setPendingRecovery(result.pendingRecovery);
       setUpcoming(result.upcomingInterviews ?? []);
       setActions(result.actionItems ?? []);
       setStatus(await api.gmailStatus());
+      if (isDemoRef.current) return;
       await afterRecoveryStart(result.recovery);
       if (result.rateLimited) {
         setNotice({
@@ -1176,14 +1309,16 @@ export function DashboardPage() {
         });
       }
     } catch (error) {
+      if (isDemoRef.current) return;
       setNotice({ kind: "error", text: errorText(error) });
       setStatus(await api.gmailStatus().catch(() => null));
     } finally {
-      setSyncing(false);
+      if (!isDemoRef.current) setSyncing(false);
     }
-  }, [windowDays, afterRecoveryStart]);
+  }, [liveWindowDays, afterRecoveryStart]);
 
   useEffect(() => {
+    if (isDemo) return;
     const flag = searchParams.get("gmail");
     if (flag) {
       setNotice(
@@ -1199,36 +1334,42 @@ export function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (isDemo) return;
     window.localStorage.setItem(WINDOW_STORAGE_KEY, String(windowDays));
-  }, [windowDays]);
+  }, [windowDays, isDemo]);
 
   useEffect(() => {
+    if (isDemo) return;
     void (async () => {
       try {
         const s = await api.gmailStatus();
+        if (isDemoRef.current) return;
         setStatus(s);
         if (!s.connected) return;
         await loadApplications();
+        if (isDemoRef.current) return;
         const stale = !s.lastSyncAt || Date.now() - new Date(s.lastSyncAt).getTime() > AUTO_SYNC_AFTER_MS;
         if (stale && !autoSynced.current) {
           autoSynced.current = true;
           await runSync();
         }
       } catch (error) {
+        if (isDemoRef.current) return;
         setNotice({ kind: "error", text: errorText(error) });
       }
     })();
-  }, [loadApplications, runSync]);
+  }, [isDemo, loadApplications, runSync]);
 
   const lastSyncAt = status?.lastSyncAt;
   const autoSyncOn = Boolean(status?.connected && status.autoSyncMinutes);
 
   useEffect(() => {
-    if (!autoSyncOn) return;
+    if (isDemo || !autoSyncOn) return;
     const timer = window.setInterval(() => {
       void (async () => {
         try {
           const s = await api.gmailStatus();
+          if (isDemoRef.current) return;
           if (s.lastSyncAt === lastSyncAt) return;
           setStatus(s);
           if (!syncing) await loadApplications();
@@ -1238,29 +1379,39 @@ export function DashboardPage() {
       })();
     }, STATUS_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [autoSyncOn, lastSyncAt, syncing, loadApplications]);
+  }, [autoSyncOn, lastSyncAt, syncing, loadApplications, isDemo]);
 
   const recoveryRunning = evaluations?.run.running ?? false;
+  const waitingOnSavedJd = applications.some(
+    (app) => !app.evaluation && app.prospectMatch && app.prospectMatch.decision !== "none",
+  );
 
   useEffect(() => {
-    if (!recoveryRunning) return;
+    if (isDemo || (!recoveryRunning && !waitingOnSavedJd)) return;
     const timer = window.setInterval(() => {
       void (async () => {
         try {
+          if (waitingOnSavedJd && !recoveryRunning) {
+            await loadApplications();
+            return;
+          }
           const result = await loadEvaluations();
+          if (isDemoRef.current) return;
           if (!result.run.running) {
             await loadApplications();
             if (result.run.error) setNotice({ kind: "error", text: `JD recovery failed: ${result.run.error}` });
           }
         } catch (error) {
+          if (isDemoRef.current) return;
           setNotice({ kind: "error", text: errorText(error) });
         }
       })();
     }, RECOVERY_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [recoveryRunning, loadEvaluations, loadApplications]);
+  }, [recoveryRunning, waitingOnSavedJd, loadEvaluations, loadApplications, isDemo]);
 
   const onRecover = async () => {
+    if (isDemo) return;
     setNotice(null);
     try {
       const result = await api.gmailRunRecovery(windowDays);
@@ -1275,6 +1426,7 @@ export function DashboardPage() {
   };
 
   const onDisconnect = async () => {
+    if (isDemo) return;
     if (!window.confirm("Disconnect Gmail? Cached results stay until you reconnect.")) return;
     try {
       await api.gmailDisconnect();
@@ -1286,7 +1438,7 @@ export function DashboardPage() {
   };
 
   const onUpdateTracker = async (app: GmailApplication) => {
-    if (!app.trackerJobId || !app.suggestedStatus) return;
+    if (isDemo || !app.trackerJobId || !app.suggestedStatus) return;
     setUpdatingKey(app.key);
     try {
       await api.updateStatus(
@@ -1316,12 +1468,17 @@ export function DashboardPage() {
     );
     setReviewKey(null);
     // Reload applications so a newly auto-added tracker row is linked (same as recovery poll).
-    void loadApplications().catch(() => null);
+    if (!isDemo) void loadApplications().catch(() => null);
   };
 
   const counts = STATUS_ORDER.map((s) => ({
     status: s,
-    count: applications.filter((a) => (s === "interviewing" ? reachedInterview(a) : a.status === s)).length,
+    count:
+      s === "applied"
+        ? applications.length
+        : s === "interviewing"
+          ? applications.filter(reachedInterview).length
+          : applications.filter((a) => a.status === s).length,
   }));
   const activeInterviews = applications.filter((a) => a.activelyInterviewing);
 
@@ -1340,10 +1497,31 @@ export function DashboardPage() {
 
   return (
     <section className="stack">
+      {isDemo && !hideDemoBanner && (
+        <div className="card stack" style={{ gap: "0.35rem" }}>
+          <strong>Demo snapshot</strong>
+          <p className="muted smallText" style={{ margin: 0 }}>
+            Fictional candidate ({DEMO_CANDIDATE.name} · {DEMO_CANDIDATE.email}), companies, scores, and next steps.
+            Safe for GitHub and LinkedIn screenshots.{" "}
+            <Link to="/">Back to live dashboard</Link>
+            {" · "}
+            <button type="button" className="linkButton smallText" onClick={() => setHideDemoBanner(true)}>
+              Hide this banner
+            </button>
+          </p>
+        </div>
+      )}
       <div className="rowBetween">
         <div className="row" style={{ alignItems: "center", gap: "0.75rem" }}>
           <h2 style={{ margin: 0 }}>Applications</h2>
-          <select value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value) as WindowDays)}>
+          {isDemo ? (
+            <span className="smallText muted">All-time JD review</span>
+          ) : (
+            <Link to="/jd-review" className="smallText">
+              All-time JD review
+            </Link>
+          )}
+          <select value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value) as WindowDays)} disabled={isDemo}>
             {WINDOW_OPTIONS.map((d) => (
               <option key={d} value={d}>
                 Last {d} days
@@ -1351,7 +1529,13 @@ export function DashboardPage() {
             ))}
           </select>
         </div>
-        <Link to="/addjob">+ Add a job</Link>
+        {isDemo ? (
+          <a href="#demo" onClick={(e) => e.preventDefault()}>
+            + Add a job
+          </a>
+        ) : (
+          <Link to="/addjob">+ Add a job</Link>
+        )}
       </div>
 
       {notice && <p className={notice.kind === "error" ? "error" : "muted"}>{notice.text}</p>}
@@ -1411,31 +1595,38 @@ export function DashboardPage() {
               <button
                 className="btn-secondary"
                 onClick={() => void onRecover()}
-                disabled={syncing || recoveryRunning || pendingRecovery === 0}
+                disabled={isDemo || syncing || recoveryRunning || pendingRecovery === 0}
                 title="Find each application's job description and score it (newest first). Also runs after every sync."
               >
                 {recoveryRunning
                   ? `Recovering JDs… (${evaluations?.run.processed ?? 0} done)`
                   : `Recover JDs (${pendingRecovery} pending)`}
               </button>
-              <button onClick={() => void runSync()} disabled={syncing}>
+              <button onClick={() => void runSync()} disabled={isDemo || syncing}>
                 {syncing ? "Syncing…" : "Sync now"}
               </button>
-              <button className="btn-secondary" onClick={() => void onDisconnect()} disabled={syncing}>
+              <button className="btn-secondary" onClick={() => void onDisconnect()} disabled={isDemo || syncing}>
                 Disconnect
               </button>
             </div>
           </div>
 
-          <NextStepsCard onTrackerChanged={() => void loadApplications()} />
+          <NextStepsCard
+            key={isDemo ? "demo-next-steps" : "live-next-steps"}
+            onTrackerChanged={isDemo ? undefined : () => void loadApplications()}
+            demoPanel={isDemo ? DEMO_NEXT_STEPS : undefined}
+          />
 
           <UpcomingInterviewsCard
+            key={isDemo ? "demo-upcoming" : "live-upcoming"}
             interviews={upcoming}
             active={activeInterviews}
             actions={actions}
             onOpenJd={openJdReview}
+            demoBriefs={isDemo ? DEMO_BRIEFS : undefined}
             onDismissAction={(emailId) => {
               setActions((list) => list.filter((a) => a.emailId !== emailId));
+              if (isDemo) return;
               void api.gmailDismissAction(emailId).catch((error) => {
                 setNotice({ kind: "error", text: errorText(error) });
                 void loadApplications();
@@ -1481,7 +1672,9 @@ export function DashboardPage() {
             </div>
           )}
 
-          <InsightsCard>{rubric && rubric.scored > 0 && <FitOutcomeDetail rubric={rubric} />}</InsightsCard>
+          <InsightsCard key={isDemo ? "demo-insights" : "live-insights"} demoPanel={isDemo ? DEMO_INSIGHTS : undefined}>
+            {rubric && rubric.scored > 0 && <FitOutcomeDetail rubric={rubric} />}
+          </InsightsCard>
 
           <div className="card stack">
             {applications.length > 0 && (
@@ -1573,6 +1766,7 @@ export function DashboardPage() {
                         </td>
                         <td>
                           <JdMatchCell
+                            app={app}
                             evaluation={app.evaluation}
                             role={app.role ?? app.evaluation?.jdTitle}
                             open={reviewKey === app.key}
@@ -1582,9 +1776,15 @@ export function DashboardPage() {
                         <td>
                           {app.trackerJobId ? (
                             <div className="stack" style={{ gap: "0.35rem" }}>
-                              <Link to={`/jobs/${app.trackerJobId}/detail`}>
-                                In tracker: {JOB_STATUS_LABEL[app.trackerStatus!] ?? app.trackerStatus}
-                              </Link>
+                              {isDemo ? (
+                                <span className="muted">
+                                  In tracker: {JOB_STATUS_LABEL[app.trackerStatus!] ?? app.trackerStatus}
+                                </span>
+                              ) : (
+                                <Link to={`/jobs/${app.trackerJobId}/detail`}>
+                                  In tracker: {JOB_STATUS_LABEL[app.trackerStatus!] ?? app.trackerStatus}
+                                </Link>
+                              )}
                               {app.suggestedStatus && (
                                 <button
                                   className="btn-secondary"
@@ -1609,17 +1809,25 @@ export function DashboardPage() {
                       {scoringKey === app.key && app.evaluation?.fitTotal !== undefined && (
                         <tr>
                           <td colSpan={7}>
-                            <ScoringDetailsPanel
-                              appKey={app.key}
-                              onEffectiveScoreChange={() => void loadApplications().catch(() => null)}
-                            />
+                            {isDemo ? (
+                              <DemoFitBreakdown evaluation={app.evaluation} />
+                            ) : (
+                              <ScoringDetailsPanel
+                                appKey={app.key}
+                                onEffectiveScoreChange={() => void loadApplications().catch(() => null)}
+                              />
+                            )}
                           </td>
                         </tr>
                       )}
                       {reviewKey === app.key && app.evaluation && (
                         <tr>
                           <td colSpan={7}>
-                            {app.evaluation.status === "scored" ? (
+                            {isDemo ? (
+                              <p className="muted smallText" style={{ margin: 0 }}>
+                                Demo snapshot — pick, paste, and title updates are disabled.
+                              </p>
+                            ) : app.evaluation.status === "scored" ? (
                               <TitlePanel app={app} onUpdated={(e) => onScored(app.key, e, true)} />
                             ) : (
                               <ReviewPanel app={app} onScored={(e) => onScored(app.key, e)} />

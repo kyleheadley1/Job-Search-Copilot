@@ -257,6 +257,67 @@ export const sanitizeExtractedTags = (job: ExtractedJobData): ExtractedJobData =
   };
 };
 
+/** Public wrapper — scoring and audits must not trust tags that fail this check. */
+export const termIsLiterallyInJdText = (term: string, rawText: string): boolean =>
+  termLiterallyInText(term, rawText);
+
+/** Stored raw JD shorter than this cannot reliably support extracted technology tags. */
+export const INCOMPLETE_JD_CHAR_FLOOR = 600;
+
+export type IncompleteJdDiagnostic = {
+  incomplete: boolean;
+  rawTextChars: number;
+  storedRequirementTags: string[];
+  ungroundedRequirementTags: string[];
+  note: string;
+};
+
+const uniqueTags = (job: Pick<ExtractedJobData, "stack" | "requiredSkills" | "preferredSkills">): string[] =>
+  [...new Set([...(job.stack ?? []), ...(job.requiredSkills ?? []), ...(job.preferredSkills ?? [])])].filter(
+    Boolean,
+  );
+
+/** List extracted tags that are not literally present in stored raw JD text. */
+export const listUngroundedExtractedTags = (
+  job: Pick<ExtractedJobData, "rawText" | "stack" | "requiredSkills" | "preferredSkills">,
+): string[] => {
+  const raw = job.rawText?.trim() ?? "";
+  return uniqueTags(job).filter((term) => !termLiterallyInText(term, raw));
+};
+
+/**
+ * Diagnostic only. Does not invent JD text or restore tags.
+ * Scoring continues to drop ungrounded tags via sanitizeExtractedTags when raw text exists.
+ */
+export const assessExtractedJdSupport = (
+  job: Pick<ExtractedJobData, "rawText" | "stack" | "requiredSkills" | "preferredSkills">,
+): IncompleteJdDiagnostic => {
+  const raw = job.rawText?.trim() ?? "";
+  const storedRequirementTags = uniqueTags(job);
+  const ungroundedRequirementTags = listUngroundedExtractedTags(job);
+  const incomplete = raw.length < INCOMPLETE_JD_CHAR_FLOOR;
+  let note: string;
+  if (!raw) {
+    note =
+      "Stored raw JD is empty. Extracted technology tags cannot be grounded and must not be trusted from metadata alone.";
+  } else if (incomplete) {
+    note =
+      "Stored raw JD is too incomplete to support the extracted requirements. Ungrounded technology tags are not trusted merely because they appear in stored extraction metadata.";
+  } else if (ungroundedRequirementTags.length > 0) {
+    note =
+      "Some extracted technology tags are not literally present in the stored raw JD and are not trusted as requirements.";
+  } else {
+    note = "Stored raw JD grounds the extracted technology tags.";
+  }
+  return {
+    incomplete,
+    rawTextChars: raw.length,
+    storedRequirementTags,
+    ungroundedRequirementTags,
+    note,
+  };
+};
+
 /** Highest provenance strength for a term, or null when absent from JD text. */
 export const termProvenanceStrength = (
   term: string,

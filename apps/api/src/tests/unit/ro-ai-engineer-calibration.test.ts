@@ -14,6 +14,8 @@ import {
   roleTitleSignalsSeniority,
   seniorityFieldSignalsOverreach,
 } from "../../lib/seniorityGate.js";
+import { detectSpecializationGap } from "../../lib/capabilityGap.js";
+import { findLiteralLeadsWithSourceQuote } from "../../lib/disjunctiveLanguageRequirement.js";
 import {
   calibrationSweResumeContexts,
   fixtureToJobRecord,
@@ -75,6 +77,18 @@ describe("seniority gate — role level only", () => {
 });
 
 describe("Ro AI Engineer calibration", () => {
+  it("treats Strong Python as a literal Python-primary requirement", () => {
+    expect(findLiteralLeadsWithSourceQuote(RO_AI_ENGINEER_JOB, "Python")).toMatch(/Strong Python/i);
+    const gap = detectSpecializationGap(
+      RO_AI_ENGINEER_JOB,
+      undefined,
+      calibrationSweResumeContexts().BASE?.rawText,
+    );
+    expect(gap?.kind).toBe("backend_stack");
+    expect(gap?.name).toMatch(/Python backend/i);
+    expect(gap?.dock).toBeGreaterThan(0);
+  });
+
   it("scores without false seniority gate; one final; referral-advised apply band", () => {
     const result = recomputeStoredJobScore({
       job: fixtureToJobRecord(RO_AI_ENGINEER_FIXTURE),

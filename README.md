@@ -162,7 +162,7 @@ Gmail dashboard:
   - `src/services/proposals/` - the only code paths that apply approved actions (tracker status, Gmail draft)
   - `src/services/topJobs/` - alert parsing, pre-screen, location/open checks, budgeted scoring
   - `src/services/insights/` - callback statistics, coverage and seniority tables, weekly summary
-  - `src/mcp/` - MCP server (stdio): read tools, `save_job_prospect`, missing-JD list, `submit_jd_candidate`, scoring-audit tools, compact views, Cursor / Claude Desktop launch entry
+  - `src/mcp/` - MCP server (stdio): read tools, `save_job_prospect`, missing-JD list, `submit_jd_candidate`, JD recovery backlog queue, scoring-audit tools, compact views, Cursor / Claude Desktop launch entry
 - `apps/web/` - React + Vite frontend (Dashboard, Add Job, Top Jobs, Tracker)
 - `apps/extension/` - Chrome MV3 side-panel extension (React + Vite)
 - `scripts/` - root helper scripts (eval/regression utilities)
@@ -223,7 +223,7 @@ The MCP server is **local** stdio so Cursor or Claude Desktop can talk to the ex
 
 - Start with a server Cursor or Claude Desktop can call, not an in-app MCP client. The web Ask assistant already has its own tools; duplicating that as an MCP client was out of scope.
 - Reuse `getGmailApplications`, stored evaluations, insights, and the existing JD recovery / scoring pipeline. Do not query Gmail live from MCP, do not re-run insights, and do not invent a second database layer.
-- Keep the write surface small. A Cursor or Claude Desktop chat cannot mutate the tracker directly, create drafts, or sync mail. `save_job_prospect` does not score by itself; a later company-scoped recovery run can. `submit_jd_candidate` never scores; it only queues a candidate for dashboard review. Phase 3A audit tools are read-only.
+- Keep the write surface small. A Cursor or Claude Desktop chat cannot mutate the tracker directly, create drafts, or sync mail. `save_job_prospect` does not score by itself; a later company-scoped recovery run can. `submit_jd_candidate` never scores; it only queues a candidate for dashboard review. The Phase 4A recovery queue records search progress and leases; it never confirms or scores. Phase 3A audit tools are read-only.
 - Return explicit field allowlists (compact rows, not Mongo documents with secrets stripped). Compact read tools keep email bodies, sender addresses, full JDs, and credentials off the wire. `get_scoring_audit_context` is the exception that returns the stored JD and current resume/profile so an auditor can review a score.
 - Trust model is the same as `npm run dev`: the MCP client launches the process as the OS user, which loads the root `.env` and `MONGO_URI` / `MONGO_DB_NAME`. There is no extra login.
 
@@ -232,7 +232,7 @@ The MCP server is **local** stdio so Cursor or Claude Desktop can talk to the ex
 - `list_applications` — compact application rows (company, role, status, dates, optional fit total), filterable by text/status/lookback
 - `get_application_details` — one application: stage, last few email subjects, interview rounds, action summary, fit totals, and recovery provenance (`foundVia`, `matchSignals`). No bodies, senders, posting URLs, candidate text, or JD text
 - `get_application_insights` — the **stored** latest insights run (timestamp, headline/conclusion, coverage counts, sample sizes). Does not Re-run or call OpenAI
-- `save_job_prospect` — Claude extracts company and title from the pasted JD (aggregator pastes are the usual input) and passes the original text plus optional location, seniority, requisition ID, URL, and salary. URL and requisition ID are optional and are not required for automatic matching. Raw text is stored separately from a deterministically cleaned copy (aggregator UI clutter stripped, no second LLM call). The save does not create an application. It may start a **company-scoped** background recovery run: if the prospect matches a Gmail application, that run can attach it, score it, and sync the tracker. `recoveryQueued: true` means a run was started or already running, not that scoring finished. If a recovery run is already in progress, the company-scoped request is remembered and processed when that run finishes. Gmail/API full recovery is unchanged (all pending companies in the sync window)
+- `save_job_prospect` — Claude extracts company and title from the pasted JD (aggregator pastes are the usual input) and passes the original text plus optional location, seniority, requisition ID, URL, and salary. URL and requisition ID are optional and are not required for automatic matching. Raw text is stored separately from a deterministically cleaned copy (aggregator UI clutter stripped, no second LLM call). The save does not create an application. The tool returns `matchStatus` (`awaiting_gmail_application`, `queued_for_scoring`, `pending_review`, `scored`, or `unmatched`) and a `note` — report that, not a guessed “saved and evaluated.” Unique company/title matches may start a **company-scoped** background recovery run that can attach, score, and sync the tracker. `recoveryQueued: true` means that run was started or already running, not that scoring finished. `matchStatus: scored` is the only success value that means a stored fit already exists. If a recovery run is already in progress, the company-scoped request is remembered and processed when that run finishes. Gmail/API full recovery is unchanged (all pending companies in the sync window). The applications dashboard shows Gmail rows only; a standalone prospect is not an application. While an open prospect is uniquely matched to an unscored Gmail row, JD match reads “JD saved — scoring” instead of “Not checked yet.”
 
 **Matching (tested)**
 
@@ -262,6 +262,29 @@ Completeness is decided on the server from the submitted text, not from Claude's
 
 Submit never scores, never picks a winner among competing URLs, and never overwrites a scored evaluation. A later recovery rebuild keeps MCP candidates instead of wiping them. Human confirmation is always required.
 
+**Evidence-based JD review and shadow auto-confirmation (Phase 4C)**
+
+Pending candidates are reviewed on **JD Review** (`/jd-review`), an all-time queue that is not limited by the dashboard 7/30-day lookback. Each row shows employer, role, application date, source URL, completeness, match evidence, and a shadow recommendation. Confirm, reject, and Recheck completeness use the existing evaluation endpoints and never auto-score.
+
+On submit the server stores an immutable evidence snapshot: source URL/type, company/title/req/location/date/completeness signals, competing postings, Claude's explanation, and optional `claudeConfidence`. Provenance is `verified_source`, `deterministic`, `claude_reported`, or `unknown`. Claude confidence is never treated as proof.
+
+Shadow eligibility is deterministic and conservative: `eligible_for_auto_confirmation`, `manual_review`, or `reject_mismatch`. Unknown signals are not positive evidence. Hard blockers include conflicting requisition IDs or employers, incompatible title/seniority, location that identifies a different requisition, incomplete JDs, and competing postings without a requisition discriminator. Shadow mode never confirms or scores.
+
+Human decisions (confirmed, rejected, selected another, corrected source/identity, pasted) are stored in `jd_review_decisions` with the pre-review snapshot and a shadow comparison. Historical scores and evaluation fingerprints are not rewritten. The shadow report is descriptive only and does not claim precision from a small sample.
+
+**Persistent JD recovery backlog (Phase 4A)**
+
+Claude Desktop can resume missing-JD search across sessions. Progress lives in Mongo `jd_recovery_queue`, not in chat history.
+
+Typical loop:
+
+1. `get_jd_recovery_progress` — mutually exclusive counts for the 120-day Gmail window: scored, unattempted, in progress, pending human JD review, not found (retry not due), skipped requires review, retry due, and temporary failures
+2. `claim_next_jd_recovery_batch` — atomically lease the next five eligible applications (never-attempted first, **newest applied date first**, then older unattempted, then retry_due). Scored, pending confirmation, skipped-for-review, and recent not_found are excluded. `mode: "retry_only"` is a later pass. Default lookback is 120 days.
+3. Search the public web for each claimed key, then either `submit_jd_candidate` or `record_jd_recovery_outcome`
+4. `record_jd_recovery_outcome` — `candidate_submitted`, `not_found` (retry in seven days), `temporary_error`, or `skipped_requires_review` (held for a human; not a posting miss; no automatic retry unless `includeSkipped`). A submitted candidate is not complete; complete means dashboard confirmation plus a stored score
+
+Expired leases become eligible again. Overlapping Claude sessions cannot claim the same key. Queue rows store application keys, timestamps, short reasons, and source URLs — never Gmail bodies or credentials.
+
 **Read-only scoring audit (Phase 3A)**
 
 Claude can independently review stored fit scores — not replace the scorer. Use the local candidate profile and resume variants as the source of truth.
@@ -278,11 +301,11 @@ The tools do not rescore, do not call OpenAI, do not change evaluations, tracker
 
 - Stored `gmail_messages` have subject, from, and classifier role only — never bodies. The live confirmation/rejection emails name "Software Engineer II" in the snippet and have no job ID, team, requisition, or original application URL. MCP already returns subjects on details; nothing useful is sitting in Mongo unused. Gmail permissions and the stored-message shape are unchanged
 
-**What Phase 1–3A do not do**
+**What Phase 1–4A do not do**
 
 - Score at the moment of capture, or run a full 120-day recovery across unrelated companies when a prospect is saved
 - Auto-score a submitted JD candidate, pick among competing postings, overwrite a scored evaluation, or write an audit-corrected score
-- Autonomous web scraping, scheduled browsing, or a new job queue
+- Autonomous web scraping or scheduled browsing. Phase 4A is a resumable recovery backlog, not a posting crawler
 - Direct Gmail access from MCP (including raw bodies), or a second scoring engine inside MCP
 - An MCP client inside the web app
 - The rest of the Ask assistant catalog (`list_tracker`, `list_top_jobs`, `get_jd_excerpt`, `propose_*`, cost summary)
@@ -292,7 +315,7 @@ The tools do not rescore, do not call OpenAI, do not change evaluations, tracker
 
 - Manual / Inspector: `npm run mcp` from the repo root (needs local Mongo and `.env`; the web UI does not have to be running)
 - Cursor (Phase 1): register `job-search-copilot` as a stdio server. Launch with an **absolute** Node binary, the repo's `tsx` loader, and the repo as `cwd`. Cursor's GUI PATH often has no `node`, and `--import tsx` fails unless cwd is the project. `DOTENV_CONFIG_QUIET=true` keeps dotenv from writing to stdout (stdout is JSON-RPC only)
-- Claude Desktop (Phase 2–3A): register the same stdio launch in `~/Library/Application Support/Claude/claude_desktop_config.json`. Fully quit Claude Desktop after editing. Confirm Phase 2 with `list_missing_job_descriptions`, Phase 3A with `list_scored_applications_for_audit`
+- Claude Desktop (Phase 2–4A): register the same stdio launch in `~/Library/Application Support/Claude/claude_desktop_config.json`. Fully quit Claude Desktop after editing. Confirm Phase 2 with `list_missing_job_descriptions`, Phase 4A with `get_jd_recovery_progress`, Phase 3A with `list_scored_applications_for_audit`
 - Native Agent discovery in this environment works when the same launch config is in **user-level** `~/.cursor/mcp.json`. A project `.cursor/mcp.json` was discoverable but did not expose tools to Agent, so do not register the server in both places at once
 - After editing Cursor MCP config: fully quit Cursor (Cmd+Q), reopen the project, check Customize → MCPs for **connected**, then use a new Agent chat. Confirm with a `list_applications` tool call, not a terminal handshake. Output → MCP Logs if it stays disconnected
 
@@ -306,7 +329,7 @@ Default local URI in `.env.example`:
 
 - `mongodb://127.0.0.1:27017/job_agent_mvp`
 
-Gmail and recovery collections: `gmail_auth`, `gmail_messages` (classifications only), `application_evaluations` (recovered JD + blind score + outcome), `job_prospects` (Phase 1 saved JDs: raw + cleaned text, unmatched until recovery attaches them), `ats_boards` (board slug cache), `serper_usage`, `llm_usage` (per-call token counts and cost, tagged by feature).
+Gmail and recovery collections: `gmail_auth`, `gmail_messages` (classifications only), `application_evaluations` (recovered JD + blind score + outcome), `job_prospects` (Phase 1 saved JDs: raw + cleaned text, unmatched until recovery attaches them), `jd_recovery_queue` (Phase 4A Claude JD-search leases and outcomes; no Gmail bodies), `ats_boards` (board slug cache), `serper_usage`, `llm_usage` (per-call token counts and cost, tagged by feature).
 
 Agentic layer collections: `agent_suggestions` and `agent_meta` (Next steps), `assistant_threads` and `assistant_proposals` (chat assistant), `gmail_outbox` (a log of every draft the app created).
 
@@ -419,7 +442,7 @@ Working the dashboard:
 
 - **Needs your pick:** choose the right posting from the candidates, or paste the JD.
 - **Not found:** the note says why (e.g. "board has no open jobs (posting likely closed)" or the closest title on the board). Paste the JD if you still care about the role, or recover it through Claude Desktop (Phase 2)
-- **Claude Desktop candidate:** a submitted posting shows up in Review. Confirm only a full posting; partial JDs stay listed but cannot be scored
+- **Claude Desktop candidate:** a submitted posting shows up in Review. Confirm only a full posting; partial JDs stay listed but cannot be scored. If a complete posting was stored as partial after a heading-heuristic miss, use Recheck completeness first — that never scores
 - Click the fit score for the full scoring detail (rules that fired, hard gates, extractor output, stored JD). Hover the JD match badge for every step that was tried.
 
 Suggested routine: sync once a day, clear "Needs your pick" weekly, recover leftover "Not found" postings through Claude Desktop, and read the score-vs-outcome card once there are about 30 outcomes.

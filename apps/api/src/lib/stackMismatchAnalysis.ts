@@ -2,8 +2,9 @@ import type { ExtractedJobData } from "../types/job.js";
 import {
   evaluateDisjunctiveLanguageRequirement,
   filterGapsAfterDisjunctiveMatch,
+  languageClearedBySatisfiedDisjunctiveGroup,
   languageIsIllustrativeExampleOnly,
-  languageOnlyInDisjunctiveChoice,
+  languageOnlyInNonMandatoryGroup,
   lineDisjunctiveRequirementSatisfied,
 } from "./disjunctiveLanguageRequirement.js";
 import { GO_LANGUAGE_PATTERNS } from "./goLanguage.js";
@@ -336,7 +337,8 @@ export const analyzeStackMismatch = (
   const jdValidatedCore = uniqueCoreRaw.filter((label) => {
     if (termIsPreferredOrNarrativeOnly(label, job)) return false;
     if (languageIsIllustrativeExampleOnly(job, label)) return false;
-    if (languageOnlyInDisjunctiveChoice(job, label) && disjunctive.satisfied) return false;
+    if (languageOnlyInNonMandatoryGroup(disjunctive, label)) return false;
+    if (languageClearedBySatisfiedDisjunctiveGroup(disjunctive, label)) return false;
     if (/^(Terraform|Redis|Kubernetes)$/i.test(label)) {
       return termGroundedInJdRawText(label, job);
     }

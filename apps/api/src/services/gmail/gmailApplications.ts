@@ -555,6 +555,48 @@ export const actionItems = (apps: GmailApplication[]): ActionItem[] =>
         (a.deadline ?? "9999").localeCompare(b.deadline ?? "9999") || a.receivedAt.localeCompare(b.receivedAt),
     );
 
+/**
+ * Grouping always uses this many days of mail so application keys stay stable when a caller
+ * asks for a shorter eligibility window. Truncating messages before grouping can mint a
+ * role-less key (`axle::`) that later tools cannot resolve.
+ */
+export const APPLICATION_IDENTITY_LOOKBACK_DAYS = 120;
+
+/** Keep applications whose apply date or latest activity falls inside `days`. */
+export const filterApplicationsByLookback = (
+  apps: GmailApplication[],
+  days: number,
+  now = new Date(),
+): GmailApplication[] => {
+  const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  return apps.filter((app) => app.appliedAt >= since || app.lastUpdateAt >= since);
+};
+
+export const companyKeyFromApplicationKey = (key: string): string => {
+  const idx = key.indexOf("::");
+  return (idx === -1 ? key : key.slice(0, idx)).trim();
+};
+
+/** Same-company keys currently listed. Hints only — never a merge or replacement. */
+export const relatedApplicationsForKey = (
+  claimedKey: string,
+  apps: GmailApplication[],
+): Array<Pick<GmailApplication, "key" | "company" | "role" | "appliedAt" | "lastUpdateAt" | "status">> => {
+  const companyKey = companyKeyFromApplicationKey(claimedKey);
+  if (!companyKey) return [];
+  return apps
+    .filter((app) => app.key !== claimedKey && companyKeyFromApplicationKey(app.key) === companyKey)
+    .slice(0, 8)
+    .map((app) => ({
+      key: app.key,
+      company: app.company,
+      role: app.role,
+      appliedAt: app.appliedAt,
+      lastUpdateAt: app.lastUpdateAt,
+      status: app.status,
+    }));
+};
+
 /** Upcoming interviews and open action requests, from one look back over interview-length history. */
 export const getInterviewPanel = async (): Promise<{ upcoming: UpcomingInterview[]; actions: ActionItem[] }> => {
   const apps = await getGmailApplications(UPCOMING_LOOKBACK_DAYS);
@@ -565,10 +607,10 @@ export const getUpcomingInterviews = async (): Promise<UpcomingInterview[]> =>
   (await getInterviewPanel()).upcoming;
 
 export const getGmailApplications = async (days: number): Promise<GmailApplication[]> => {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const identitySince = new Date(Date.now() - APPLICATION_IDENTITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const [messages, jobs] = await Promise.all([
-    gmailMessagesRepository.listApplicationMessagesSince(since),
+    gmailMessagesRepository.listApplicationMessagesSince(identitySince),
     jobsRepository.findAll(),
   ]);
-  return buildApplications(messages, jobs);
+  return filterApplicationsByLookback(buildApplications(messages, jobs), days);
 };

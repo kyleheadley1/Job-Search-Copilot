@@ -112,6 +112,7 @@ export const parseCommaTitleCompany = (line: string): { jobTitle: string; compan
   // "Software Engineer, Reflections" / "Software Engineer, AI Platforms" —
   // team/org qualifiers must stay in the title, not become the company.
   if (looksLikeTeamOrgQualifier(companyName)) return null;
+  if (!isValidCompanyCandidate(companyName)) return null;
   return { jobTitle, companyName };
 };
 
@@ -121,7 +122,60 @@ const CORPORATE_COMPANY_RE =
 const KNOWN_EMPLOYER_AFTER_COMMA_RE =
   /^(google|meta|amazon|apple|netflix|microsoft|uber|stripe|airbnb|spotify|openai|anthropic|ibm|oracle|salesforce|bloomberg)$/i;
 
-/** Team/org unit after a role title comma — not an employer name. */
+/**
+ * Team/org unit after a role title comma — not an employer name.
+ * Single brand tokens (Plaid, Patreon) are companies unless they match the team lexicon.
+ */
+const TEAM_ORG_EXACT = new Set(
+  [
+    "reflections",
+    "product",
+    "platform",
+    "platforms",
+    "engineering",
+    "marketing",
+    "growth",
+    "news",
+    "content",
+    "data",
+    "research",
+    "privacy",
+    "operations",
+    "enablement",
+    "infrastructure",
+    "workforce",
+    "identity",
+    "payments",
+    "billing",
+    "search",
+    "ads",
+    "mobile",
+    "web",
+    "core",
+    "media",
+    "editorial",
+    "video",
+    "commerce",
+    "trust",
+    "safety",
+    "home",
+    "equity",
+    "it product",
+    "ai platforms",
+    "interactive news",
+    "app experience",
+    "workforce operations",
+    "marketing and privacy",
+    "content data products",
+  ].map((s) => s.toLowerCase()),
+);
+
+const TEAM_ORG_MULTI_RE =
+  /\b(platforms?|reflections|news|products?|experience|operations|enablement|privacy|infrastructure|engineering|growth|content|marketing|workforce|identity|payments?)\b/i;
+
+const foldTeamOrgKey = (s: string): string =>
+  s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+
 export const looksLikeTeamOrgQualifier = (name: string): boolean => {
   const s = name.trim();
   if (!s || s.length > 48) return false;
@@ -129,7 +183,11 @@ export const looksLikeTeamOrgQualifier = (name: string): boolean => {
   if (KNOWN_EMPLOYER_AFTER_COMMA_RE.test(s)) return false;
   if (looksLikeLocation(s)) return false;
   const words = s.split(/\s+/).filter(Boolean);
-  return words.length >= 1 && words.length <= 4;
+  if (words.length < 1 || words.length > 4) return false;
+  const key = foldTeamOrgKey(s);
+  if (TEAM_ORG_EXACT.has(key)) return true;
+  if (words.length >= 2 && TEAM_ORG_MULTI_RE.test(s.normalize("NFKD"))) return true;
+  return false;
 };
 
 export const normalizeLocationPrefixedTitle = (

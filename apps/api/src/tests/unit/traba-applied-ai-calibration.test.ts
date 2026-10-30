@@ -3,6 +3,7 @@ import { evaluateRules } from "../../agents/jobAgent/rules.js";
 import { userProfile } from "../../config/userProfile.js";
 import { evaluateHardGates } from "../../lib/hardGates.js";
 import { computePoolFriendliness } from "../../lib/poolFriendliness.js";
+import { sanitizeExtractedTags } from "../../lib/jdTagProvenance.js";
 import {
   detectRoleSeniorityOverreach,
   earlyCareerLevelVetoesSeniorityGate,
@@ -36,8 +37,8 @@ describe("Traba Applied AI calibration", () => {
     expect(scored.score.scoreDisplay?.hardGates ?? []).toEqual([]);
     expect(scored.score.survivability).toBeGreaterThanOrEqual(0.5);
     expect(scored.score.survivability).toBeLessThanOrEqual(0.58);
-    expect(scored.poolFriendliness).toBeGreaterThanOrEqual(0.83);
-    expect(scored.poolFriendliness).toBeLessThanOrEqual(0.92);
+    expect(scored.poolFriendliness).toBeGreaterThanOrEqual(0.74);
+    expect(scored.poolFriendliness).toBeLessThanOrEqual(0.80);
     expect(scored.score.total!).toBeGreaterThanOrEqual(74);
     expect(scored.score.total!).toBeLessThanOrEqual(86);
 
@@ -47,6 +48,17 @@ describe("Traba Applied AI calibration", () => {
     expect(display.hardGates).toEqual([]);
     expect(["apply", "strong_apply"]).toContain(display.scoreBand);
     expect(display.actionLine).toMatch(/^(Apply|Strong apply) — /);
+  });
+
+  it("explains scoring-path pool 0.76 vs standalone unsanitized 0.84 as a specific-stack drop", () => {
+    const unsanitized = computePoolFriendliness(TRABA_JOB);
+    const sanitized = computePoolFriendliness(sanitizeExtractedTags(TRABA_JOB));
+    expect(unsanitized.adjustments.some((row) => row.id === "specificStack")).toBe(true);
+    expect(sanitized.adjustments.some((row) => row.id === "specificStack")).toBe(false);
+    expect(unsanitized.score).toBeCloseTo(0.84, 2);
+    expect(sanitized.score).toBeCloseTo(0.76, 2);
+    const scored = scoreCalibrationAnchor("trabaAppliedAi");
+    expect(scored.poolFriendliness).toBeCloseTo(sanitized.score, 2);
   });
 
   it("vetoes gate when body polluted seniority=senior but rawText header has Mid Level", () => {

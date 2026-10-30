@@ -322,14 +322,9 @@ export const applyScoringClampLayer = (params: {
     score.careerValue = Math.max(0, score.careerValue - 1);
   }
 
-  // After all stack caps — full credit when and/or stack requirement is satisfied (React+TS satisfies Rails/React/TS line).
-  if (
-    rules.disjunctiveLanguageRequirementSatisfied &&
-    !rules.stackMismatch &&
-    score.stackFit < 17
-  ) {
-    score.stackFit = Math.max(score.stackFit, 17);
-  }
+  // Do not floor stackFit to 17 because a disjunctive group was satisfied.
+  // That raised otherwise-valid LLM scores and leaked credit from unrelated groups.
+  // Preserve original LLM stackFit unless a mismatch/shape clamp above reduced it.
 
   // Title/responsibility seniority mismatch / early-career-exceed severity → Level fit dock.
   // Core function ownership beyond early-career must move capability, not only Key Risk prose.

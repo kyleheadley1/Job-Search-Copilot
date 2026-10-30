@@ -153,6 +153,31 @@ describe("jdTextLooksComplete", () => {
     expect(jdTextLooksComplete(ROLE_WITHOUT_QUALIFICATIONS)).toBe(false);
   });
 
+  it("accepts Experience We're Looking For as a qualifications heading", () => {
+    const text = [
+      "Software Engineer",
+      "Ooma",
+      "About the Role",
+      "You will own backend services used by the communications platform and ship production features with the team each week.",
+      "What You'll Do",
+      "- Design and implement backend services for the communications platform",
+      "- Collaborate with product and support on customer-facing issues",
+      "Experience We're Looking For",
+      "- Comfortable shipping production software in a collaborative environment",
+      "- Strong communication with product, support, and other engineers",
+      "- Ability to debug systems and take ownership of customer-facing issues",
+      "What We Offer",
+      "$94,000—$120,000 USD",
+    ].join("\n");
+    const assessment = assessJdCompleteness(text);
+    expect(assessment.truncated).toBe(false);
+    expect(assessment.dutyOk).toBe(true);
+    expect(assessment.qualOk).toBe(true);
+    expect(assessment.qualChars).toBeGreaterThan(80);
+    expect(jdTextLooksComplete(text)).toBe(true);
+    expect(classifySubmittedCompleteness(text, "full")).toBe("full");
+  });
+
   it("accepts paragraph-only duties and qualifications with no list markers or standard headings", () => {
     const text = [
       "From day one, we'll ask you to contribute to any and every aspect of our stack. You'll work closely with product, then tackle increasingly complex problems from schema design to UI polish.",

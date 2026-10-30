@@ -187,4 +187,26 @@ describe("scoring clamp layer", () => {
     expect(stripped).not.toMatch(/92%/);
     expect(stripped).toContain("Real job title");
   });
+
+  it("does not floor stackFit to 17 when a disjunctive group is satisfied", () => {
+    const extracted = makeJob({
+      company: "Simeio",
+      title: "Full Stack AI Developer",
+      stack: ["Python", "Node.js"],
+      requirements: ["Strong hands-on experience with Python, Node.js or similar technologies."],
+      rawText: "Strong hands-on experience with Python, Node.js or similar technologies.",
+    });
+    const rules = {
+      ...cleanRules(),
+      disjunctiveLanguageRequirementSatisfied: true,
+      disjunctiveAcceptedLanguages: ["Python", "Node.js"],
+      stackMismatch: false,
+    };
+    const { score } = applyScoringClampLayer({
+      score: { ...inflatedLlmScore(), stackFit: 12 },
+      extracted,
+      rules,
+    });
+    expect(score.stackFit).toBe(12);
+  });
 });

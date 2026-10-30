@@ -187,7 +187,7 @@ export const EMPLOYEE_COUNT_RE =
   /^\d{1,3}(?:,\d{3})?(?:\s*-\s*\d{1,3}(?:,\d{3})?|\+)?\s+employees$/i;
 
 export const BODY_SECTION_HEADER_RE =
-  /^(responsibilities|qualification|qualifications|required|preferred|what you.?ll do|what you.?ll be doing|what we.?re looking for|who we are|who you are|about the role|about this role|about the company|about you|overview|company|role|this role|the role|what success looks like|this role is for you if|this role is likely not for you if|our tech stack|our benefits|workplace policy|equal opportunity|candidate privacy notice|accommodations|what the job involves)$/i;
+  /^(responsibilities|qualification|qualifications|required|preferred|what you.?ll do|what you.?ll be doing|what we.?re looking for|who we are|who you are|about the role|about this role|about the company|about you|overview|company|role|this role|the role|what success looks like|this role is for you if|this role is likely not for you if|our tech stack|our benefits|workplace policy|equal opportunity|candidate privacy notice|accommodations|what the job involves|what we\s*build|why this(?:\s+job)?)$/i;
 
 /** Verbs in "{Company} is reinventing/building/..." or "{Company} delivers/provides/..." hiring-entity intros. */
 const HIRING_ENTITY_SELF_DESCRIPTION_RE =
@@ -218,8 +218,12 @@ export function normalizeCompanyCandidateKey(line: string): string {
 /** Job-board UI tab/section headers — never valid company names. */
 export const JOB_BOARD_UI_SECTION_HEADERS = new Set(
   [
+    "why this",
     "why this job",
     "why this job is a match",
+    "what we build",
+    "offers equity",
+    "creator home",
     "summary",
     "full job posting",
     "history",
@@ -247,8 +251,18 @@ export const JOB_BOARD_UI_SECTION_HEADERS = new Set(
 
 export function isJobBoardUiSectionHeader(line: string): boolean {
   const key = normalizeCompanyCandidateKey(line);
-  return JOB_BOARD_UI_SECTION_HEADERS.has(key);
+  if (JOB_BOARD_UI_SECTION_HEADERS.has(key)) return true;
+  if (key === "why this" || key.startsWith("why this ")) return true;
+  if (key === "what we build" || key.startsWith("what we build ")) return true;
+  return false;
 }
+
+/** Generic org/section words that are never a hiring-entity name. */
+const GENERIC_ORG_AS_COMPANY = new Set(
+  ["product", "equity", "home", "engineering", "marketing", "news", "content", "about"].map((s) =>
+    s.toLowerCase(),
+  ),
+);
 
 /** Strip leading emoji / decorative glyphs so "👶 About Junior" still matches. */
 export function stripLeadingLineDecorators(line: string): string {
@@ -398,7 +412,7 @@ export function isBrandLikeCompany(line: string): boolean {
   if (isCompanyProseCandidate(trimmed)) return false;
 
   if (
-    /^(posted|reposted|position|time|remote|seniority|money|category|required|preferred|summary|history|full job posting|why this job|why this job is a match|contract|full-time|full time|part-time|part time|internship|temporary|freelance|strong match|experience\. level|industry exp\.?)$/i.test(
+    /^(posted|reposted|position|time|remote|seniority|money|category|required|preferred|summary|history|full job posting|why this(?: job)?|why this job is a match|what we build|offers equity|creator home|contract|full-time|full time|part-time|part time|internship|temporary|freelance|strong match|experience\. level|industry exp\.?)$/i.test(
       trimmed,
     )
   ) {
@@ -427,6 +441,7 @@ export function isValidCompanyCandidate(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
   if (isJobBoardUiSectionHeader(trimmed)) return false;
+  if (GENERIC_ORG_AS_COMPANY.has(normalizeCompanyCandidateKey(trimmed))) return false;
   if (isCompanyNameStopword(trimmed)) return false;
   if (isBoardMatchChromeLine(trimmed)) return false;
   if (/^\d{1,3}%$/.test(trimmed)) return false;

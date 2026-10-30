@@ -12,12 +12,16 @@ import {
 } from "../services/gmail/gmailAuth.js";
 import { GmailRateLimitError } from "../services/gmail/gmailClient.js";
 import { presentFitForDisplay } from "../lib/authoritativeScore.js";
+import { NotAJobPostingError } from "../services/gmail/jdRecovery/applicationPostingKind.js";
 import { DEFAULT_SYNC_DAYS, MAX_SYNC_DAYS, syncGmail } from "../services/gmail/gmailSync.js";
 import { getInterviewBrief } from "../services/gmail/interviewBrief.js";
 import { evaluationsRepository } from "../services/gmail/jdRecovery/evaluations.repository.js";
 import {
+  InvalidJdCandidateError,
+  revalidateSubmittedCandidateCompleteness,
+} from "../services/gmail/jdRecovery/jdCandidates.service.js";
+import {
   AlreadyScoredError,
-  confirmCandidate,
   EvaluationNotFoundError,
   IncompleteJdError,
   InvalidTitleError,
@@ -28,11 +32,22 @@ import {
   loadEvaluations,
   MIN_PASTED_JD_CHARS,
   pendingApplications,
-  scorePastedJd,
   startRecoveryRun,
   updateApplicationTitle,
   updateApplicationTitleFromJdText,
 } from "../services/gmail/jdRecovery/runRecovery.js";
+import {
+  confirmReviewedCandidate,
+  getJdShadowReport,
+  InvalidJdReviewActionError,
+  JD_REMOVAL_REASONS,
+  listPendingJdReviews,
+  pasteReviewedJd,
+  rejectReviewedCandidate,
+  removeReviewedCandidate,
+  restoreReviewedCandidate,
+} from "../services/gmail/jdRecovery/jdReview.service.js";
+import { createLiveJdRecoveryQueueService } from "../services/gmail/jdRecovery/jdRecoveryQueue.service.js";
 import {
   buildCostSummary,
   buildMonthSpend,
@@ -41,6 +56,8 @@ import {
 import { serperUsageRepository } from "../services/gmail/jdRecovery/serperClient.js";
 import { monthStartDay } from "../services/llm/featureBudget.js";
 import { llmUsageRepository, localDay } from "../services/llm/llmUsage.js";
+import { jobProspectsRepository } from "../services/gmail/jdRecovery/jobProspects.repository.js";
+import { withProspectLinks } from "../services/gmail/jdRecovery/prospectMatch.js";
 import { buildRubricSummary, toEvaluationSummary, withEvaluations } from "../services/gmail/jdRecovery/summary.js";
 import {
   approveScoreRevision,
@@ -54,6 +71,11 @@ import {
 
 export const gmailRouter = Router();
 
+const reviewQueue = createLiveJdRecoveryQueueService({
+  getApplications: getGmailApplications,
+  getEvaluationsByKeys: (keys) => evaluationsRepository.findByKeys(keys),
+});
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DaysSchema = z.coerce.number().int().min(1).max(MAX_SYNC_DAYS).default(DEFAULT_SYNC_DAYS);
@@ -65,9 +87,10 @@ const applicationsWithEvaluations = async (days: number) => {
   const [applications, panel] = await Promise.all([getGmailApplications(days), getInterviewPanel()]);
   const evaluations = await loadEvaluations(applications);
   const revisions = await loadApprovedOverlays(applications.map((a) => a.key));
+  const openProspects = await jobProspectsRepository.findOpen().catch(() => []);
   return {
-    applications: withEvaluations(applications, evaluations, revisions),
-    pendingRecovery: pendingApplications(applications, evaluations).length,
+    applications: withProspectLinks(withEvaluations(applications, evaluations, revisions), openProspects),
+    pendingRecovery: pendingApplications(applications, evaluations, true, openProspects).length,
     upcomingInterviews: panel.upcoming,
     actionItems: panel.actions,
   };
@@ -261,6 +284,10 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
     res.status(404).json({ error: "not_found", message: error.message });
     return true;
   }
+  if (error instanceof InvalidJdCandidateError) {
+    res.status(400).json({ error: "invalid_candidate", message: error.message });
+    return true;
+  }
   if (error instanceof AlreadyScoredError) {
     res.status(409).json({ error: "already_scored", message: error.message });
     return true;
@@ -275,6 +302,14 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
   }
   if (error instanceof IncompleteJdError) {
     res.status(409).json({ error: "incomplete_jd", message: error.message });
+    return true;
+  }
+  if (error instanceof NotAJobPostingError) {
+    res.status(409).json({ error: "not_a_job_posting", message: error.message });
+    return true;
+  }
+  if (error instanceof InvalidJdReviewActionError) {
+    res.status(409).json({ error: "invalid_review_action", message: error.message });
     return true;
   }
   if (error instanceof ScoreRevisionError) {
@@ -420,10 +455,103 @@ gmailRouter.post("/evaluations/:key/diagnose", async (req, res, next) => {
   }
 });
 
+gmailRouter.get("/jd-reviews", async (_req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await listPendingJdReviews());
+  } catch (error) {
+    next(error);
+  }
+});
+
+gmailRouter.get("/jd-reviews/shadow-report", async (_req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await getJdShadowReport());
+  } catch (error) {
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/candidates/revalidate-completeness", async (req, res, next) => {
+  try {
+    const { url } = z.object({ url: z.string().url() }).parse(req.body ?? {});
+    const result = await revalidateSubmittedCandidateCompleteness(req.params.key, url, {
+      getApplications: getGmailApplications,
+      findByKey: (key) => evaluationsRepository.findByKey(key),
+      upsertIfUnscored: (evaluation) => evaluationsRepository.upsertIfUnscored(evaluation),
+    });
+    const evaluation = await evaluationsRepository.findByKey(req.params.key);
+    res.json({
+      ...result,
+      evaluation: evaluation ? toEvaluationSummary(evaluation) : undefined,
+    });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
 gmailRouter.post("/evaluations/:key/confirm", async (req, res, next) => {
   try {
     const { url, prospectId } = ConfirmBodySchema.parse(req.body ?? {});
-    const evaluation = await confirmCandidate(req.params.key, url ?? prospectId!);
+    const { evaluation } = await confirmReviewedCandidate(req.params.key, url ?? prospectId!);
+    res.json({ evaluation: toEvaluationSummary(evaluation) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/candidates/reject", async (req, res, next) => {
+  try {
+    const { url, prospectId, note } = z
+      .object({
+        url: z.string().url().optional(),
+        prospectId: z.string().trim().min(1).max(80).optional(),
+        note: z.string().trim().min(1).max(400).optional(),
+      })
+      .refine((body) => Boolean(body.url || body.prospectId), { message: "url or prospectId is required" })
+      .parse(req.body ?? {});
+    const { evaluation } = await rejectReviewedCandidate(req.params.key, url ?? prospectId!, note);
+    await reviewQueue.syncAfterReviewChange(evaluation);
+    res.json({ evaluation: toEvaluationSummary(evaluation) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/candidates/remove", async (req, res, next) => {
+  try {
+    const { url, prospectId, reason } = z
+      .object({
+        url: z.string().url().optional(),
+        prospectId: z.string().trim().min(1).max(80).optional(),
+        reason: z.enum(JD_REMOVAL_REASONS),
+      })
+      .refine((body) => Boolean(body.url || body.prospectId), { message: "url or prospectId is required" })
+      .parse(req.body ?? {});
+    const { evaluation } = await removeReviewedCandidate(req.params.key, url ?? prospectId!, reason);
+    await reviewQueue.syncAfterReviewChange(evaluation);
+    res.json({ evaluation: toEvaluationSummary(evaluation) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/candidates/restore", async (req, res, next) => {
+  try {
+    const { url, prospectId } = z
+      .object({
+        url: z.string().url().optional(),
+        prospectId: z.string().trim().min(1).max(80).optional(),
+      })
+      .refine((body) => Boolean(body.url || body.prospectId), { message: "url or prospectId is required" })
+      .parse(req.body ?? {});
+    const { evaluation } = await restoreReviewedCandidate(req.params.key, url ?? prospectId!);
+    await reviewQueue.syncAfterReviewChange(evaluation);
     res.json({ evaluation: toEvaluationSummary(evaluation) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;
@@ -434,7 +562,7 @@ gmailRouter.post("/evaluations/:key/confirm", async (req, res, next) => {
 gmailRouter.post("/evaluations/:key/jd", async (req, res, next) => {
   try {
     const { text, url } = PasteBodySchema.parse(req.body ?? {});
-    const evaluation = await scorePastedJd(req.params.key, text, url);
+    const { evaluation } = await pasteReviewedJd(req.params.key, text, url);
     res.json({ evaluation: toEvaluationSummary(evaluation) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;

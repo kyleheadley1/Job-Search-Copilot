@@ -11,6 +11,7 @@ import {
   PROSPECT_MATCH_LOOKBACK_DAYS,
 } from "../../services/gmail/jdRecovery/prospectMatch.js";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
+import type { ApplicationEvaluation } from "../../services/gmail/jdRecovery/evaluations.repository.js";
 import {
   MCP_TOOL_NAMES,
   SaveJobProspectInputSchema,
@@ -20,6 +21,8 @@ import {
 
 const store = vi.hoisted(() => ({
   rows: [] as JobProspect[],
+  apps: [] as GmailApplication[],
+  evaluations: new Map<string, ApplicationEvaluation>(),
   recovery: vi.fn(async () => ({ queued: 1, running: true, started: true })),
 }));
 
@@ -37,7 +40,40 @@ vi.mock("../../services/gmail/jdRecovery/jobProspects.repository.js", async (imp
       findOpenByCompanyKey: vi.fn(async (companyKey: string) =>
         store.rows.filter((row) => row.status === "open" && row.companyKey === companyKey),
       ),
-      markAttached: vi.fn(async () => null),
+      markAttached: vi.fn(async (id: string, applicationKey: string) => {
+        const row = store.rows.find((prospect) => prospect.id === id);
+        if (!row) return null;
+        row.status = "attached";
+        row.attachedKey = applicationKey;
+        row.updatedAt = "2026-10-29T12:00:00.000Z";
+        return { ...row };
+      }),
+    },
+  };
+});
+
+vi.mock("../../services/gmail/gmailApplications.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../services/gmail/gmailApplications.js")>();
+  return {
+    ...actual,
+    getGmailApplications: vi.fn(async () => store.apps),
+  };
+});
+
+vi.mock("../../services/gmail/jdRecovery/evaluations.repository.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../services/gmail/jdRecovery/evaluations.repository.js")>();
+  return {
+    ...actual,
+    evaluationsRepository: {
+      ...actual.evaluationsRepository,
+      findByKeys: vi.fn(async (keys: string[]) => {
+        const map = new Map<string, ApplicationEvaluation>();
+        for (const key of keys) {
+          const row = store.evaluations.get(key);
+          if (row) map.set(key, row);
+        }
+        return map;
+      }),
     },
   };
 });
@@ -47,7 +83,12 @@ vi.mock("../../services/gmail/jdRecovery/runRecovery.js", async (importOriginal)
   return { ...actual, startRecoveryRun: (...args: unknown[]) => store.recovery(...args) };
 });
 
-import { persistJobProspect, saveJobProspect } from "../../services/gmail/jdRecovery/jobProspects.service.js";
+import {
+  describeProspectLinkage,
+  persistJobProspect,
+  saveJobProspect,
+} from "../../services/gmail/jdRecovery/jobProspects.service.js";
+import { withProspectLinks } from "../../services/gmail/jdRecovery/prospectMatch.js";
 
 const CLEAN_JD = `
 Stripe
@@ -134,6 +175,8 @@ const prospect = (over: Partial<JobProspect> & Pick<JobProspect, "company" | "ti
 
 beforeEach(() => {
   store.rows = [];
+  store.apps = [];
+  store.evaluations = new Map();
   store.recovery.mockClear();
   store.recovery.mockResolvedValue({ queued: 1, running: true, started: true });
 });
@@ -284,6 +327,8 @@ describe("saveJobProspect", () => {
     expect(saved.sourceUrl).toBeUndefined();
     expect(saved.requisitionId).toBeUndefined();
     expect(saved.recoveryQueued).toBe(true);
+    expect(saved.matchStatus).toBe("awaiting_gmail_application");
+    expect(saved.note).toMatch(/No Gmail application/);
     expect(store.recovery).toHaveBeenCalledWith(PROSPECT_MATCH_LOOKBACK_DAYS, { companyKey: "stripe" });
     expect(store.rows[0]?.rawText).toContain("Easy Apply");
     expect(store.rows[0]?.cleanedText).not.toMatch(/Easy Apply/i);
@@ -312,6 +357,148 @@ describe("saveJobProspect", () => {
     await persistJobProspect({ rawText: CLEAN_JD, company: "Acme", title: "Staff Software Engineer, Billing Platform" });
     expect(store.rows).toHaveLength(2);
   });
+
+  it("queues scoring when saved after a unique Gmail application exists", async () => {
+    store.apps = [
+      app({
+        key: "yaxle::full stack software engineer repairs",
+        company: "Yaxle",
+        role: "Full-stack Software Engineer, Repairs",
+      }),
+    ];
+    const saved = await saveJobProspect({
+      rawText: CLEAN_JD.replaceAll("Stripe", "Yaxle").replace(
+        "Staff Software Engineer, Billing Platform",
+        "Full-stack Software Engineer - Repairs",
+      ),
+      company: "Yaxle",
+      title: "Full-stack Software Engineer - Repairs",
+    });
+    expect(saved.matchStatus).toBe("queued_for_scoring");
+    expect(saved.applicationKey).toBe("yaxle::full stack software engineer repairs");
+    expect(saved.note).toMatch(/Not scored yet/);
+    expect(saved.status).toBe("open");
+  });
+
+  it("attaches to an already scored evaluation without replacing the score", async () => {
+    const key = "stripe::staff software engineer billing platform";
+    store.apps = [app({ key, company: "Stripe", role: "Staff Software Engineer, Billing Platform" })];
+    store.evaluations.set(key, {
+      key,
+      company: "Stripe",
+      role: "Staff Software Engineer, Billing Platform",
+      appliedAt: "2026-10-01T00:00:00.000Z",
+      recovery: { status: "scored", attempts: [], serperQueries: 0, foundVia: "prospect" },
+      fit: {
+        total: 71,
+        recommendation: "apply",
+        recommendedResume: "BASE",
+        scoredAt: "2026-10-02T00:00:00.000Z",
+        promptVersion: "v1",
+      },
+      outcome: { status: "applied", updatedAt: "2026-10-01T00:00:00.000Z", history: [] },
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-02T00:00:00.000Z",
+    } as ApplicationEvaluation);
+    const saved = await saveJobProspect({
+      rawText: CLEAN_JD,
+      company: "Stripe",
+      title: "Staff Software Engineer, Billing Platform",
+    });
+    expect(saved.matchStatus).toBe("scored");
+    expect(saved.fitTotal).toBe(71);
+    expect(saved.status).toBe("attached");
+    expect(saved.attachedKey).toBe(key);
+    expect(store.evaluations.get(key)?.fit?.total).toBe(71);
+    expect(store.recovery).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-match two roles at the same employer", async () => {
+    store.apps = [
+      app({ key: "acme::backend", company: "Acme", role: "Backend Engineer" }),
+      app({
+        key: "acme::backend platform",
+        company: "Acme",
+        role: "Backend Engineer, Platform",
+        appliedAt: "2026-10-02T00:00:00.000Z",
+      }),
+    ];
+    const saved = await saveJobProspect({
+      rawText: CLEAN_JD.replaceAll("Stripe", "Acme").replace("Staff Software Engineer, Billing Platform", "Backend Engineer"),
+      company: "Acme",
+      title: "Backend Engineer",
+    });
+    expect(saved.matchStatus).toBe("pending_review");
+    expect(saved.note).toMatch(/Not scored/);
+  });
+
+  it("reports a duplicate save with the current match status", async () => {
+    await persistJobProspect({
+      rawText: CLEAN_JD,
+      company: "Stripe",
+      title: "Staff Software Engineer, Billing Platform",
+    });
+    const again = await saveJobProspect({
+      rawText: CLEAN_JD,
+      company: "Stripe",
+      title: "Staff Software Engineer, Billing Platform",
+    });
+    expect(again.duplicate).toBe(true);
+    expect(again.matchStatus).toBe("awaiting_gmail_application");
+    expect(again.note).toMatch(/^Already saved/);
+  });
+});
+
+describe("describeProspectLinkage and dashboard prospect links", () => {
+  it("treats missing Gmail applications as awaiting_gmail_application", () => {
+    const row = prospect({ company: "Bask Health", title: "Junior Back-End Software Engineer" });
+    expect(describeProspectLinkage(row, [], new Map()).matchStatus).toBe("awaiting_gmail_application");
+  });
+
+  it("keeps a pending MCP candidate in pending_review instead of queued scoring", () => {
+    const gmail = app({ key: "flux::fde", company: "Fluxcap", role: "FDE" });
+    const row = prospect({ company: "Fluxcap", title: "FDE" });
+    const evaluation = {
+      key: gmail.key,
+      company: "Fluxcap",
+      role: "FDE",
+      appliedAt: gmail.appliedAt,
+      recovery: {
+        status: "unverified",
+        attempts: [],
+        serperQueries: 0,
+        candidates: [{ url: "https://jobs.example/1", source: "mcp", matchLevel: "low", text: "JD" }],
+      },
+      outcome: { status: "applied", updatedAt: gmail.appliedAt, history: [] },
+      createdAt: gmail.appliedAt,
+      updatedAt: gmail.appliedAt,
+    } as ApplicationEvaluation;
+    const linkage = describeProspectLinkage(row, [gmail], new Map([[gmail.key, evaluation]]));
+    expect(linkage.matchStatus).toBe("pending_review");
+    expect(linkage.matchReason).toBe("candidate_pending_review");
+  });
+
+  it("exposes compact dashboard linkage without JD text", () => {
+    const gmail = app({
+      key: "yaxle::full stack software engineer repairs",
+      company: "Yaxle",
+      role: "Full-stack Software Engineer, Repairs",
+    });
+    const row = prospect({
+      id: "p-yaxle",
+      company: "Yaxle",
+      title: "Full-stack Software Engineer - Repairs",
+      cleanedText: "SECRET_JD_BODY",
+      rawText: "SECRET_JD_BODY",
+    });
+    const linked = withProspectLinks([gmail], [row]);
+    expect(linked[0]?.prospectMatch).toMatchObject({
+      prospectId: "p-yaxle",
+      decision: "auto",
+      status: "open",
+    });
+    expect(JSON.stringify(linked)).not.toContain("SECRET_JD_BODY");
+  });
 });
 
 describe("save_job_prospect MCP tool", () => {
@@ -339,6 +526,9 @@ describe("save_job_prospect MCP tool", () => {
       duplicate: false,
       status: "open" as const,
       recoveryQueued: true,
+      matchStatus: "awaiting_gmail_application" as const,
+      matchReason: "no_gmail_application",
+      note: "Saved. No Gmail application for this company is in the local lookback window yet.",
       rawChars: input.rawText.length,
       cleanedChars: input.rawText.length,
     })),

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AssistantPanel } from "./components/AssistantPanel";
 import { AddJobPage } from "./pages/AddJobPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { JdReviewPage } from "./pages/JdReviewPage";
 import { TrackerPage } from "./pages/TrackerPage";
 import { JobResultPage } from "./pages/JobResultPage";
 import { RoleDetailPage } from "./pages/RoleDetailPage";
@@ -47,22 +48,50 @@ function ThemePicker() {
 }
 
 function App() {
+  const location = useLocation();
+  const isDemo = location.pathname === "/demo";
   return (
     <main className="layout">
       <header className="topbar">
         <h1>Job Search Copilot</h1>
         <nav className="row">
-          <NavLink to="/" end>
-            Dashboard
-          </NavLink>
-          <NavLink to="/addjob">Add Job</NavLink>
-          <NavLink to="/top-jobs">Top Jobs</NavLink>
-          <NavLink to="/tracker">Tracker</NavLink>
+          {isDemo ? (
+            <>
+              <a href="#demo" className="active" onClick={(e) => e.preventDefault()}>
+                Dashboard
+              </a>
+              <a href="#demo" onClick={(e) => e.preventDefault()}>
+                JD Review
+              </a>
+              <a href="#demo" onClick={(e) => e.preventDefault()}>
+                Add Job
+              </a>
+              <a href="#demo" onClick={(e) => e.preventDefault()}>
+                Top Jobs
+              </a>
+              <a href="#demo" onClick={(e) => e.preventDefault()}>
+                Tracker
+              </a>
+            </>
+          ) : (
+            <>
+              <NavLink to="/" end>
+                Dashboard
+              </NavLink>
+              <NavLink to="/demo">Demo</NavLink>
+              <NavLink to="/jd-review">JD Review</NavLink>
+              <NavLink to="/addjob">Add Job</NavLink>
+              <NavLink to="/top-jobs">Top Jobs</NavLink>
+              <NavLink to="/tracker">Tracker</NavLink>
+            </>
+          )}
           <ThemePicker />
         </nav>
       </header>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<DashboardPage key="live" />} />
+        <Route path="/demo" element={<DashboardPage key="demo" variant="demo" />} />
+        <Route path="/jd-review" element={<JdReviewPage />} />
         <Route path="/addjob" element={<AddJobPage />} />
         <Route path="/top-jobs" element={<TopJobsPage />} />
         <Route path="/top-jobs/:id" element={<TopJobDetailRoute />} />
@@ -71,7 +100,7 @@ function App() {
         <Route path="/jobs/:id/detail" element={<RoleDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <AssistantPanel />
+      {!isDemo && <AssistantPanel />}
     </main>
   );
 }

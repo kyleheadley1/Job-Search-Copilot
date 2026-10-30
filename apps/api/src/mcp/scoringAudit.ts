@@ -14,6 +14,11 @@ import { effectiveScoreProvenance, presentFitForDisplay, resolveStoredFitScore }
 import { evaluationFingerprint } from "../lib/evaluationFingerprint.js";
 import type { ApprovedRevisionOverlay } from "../services/scoring/scoreRevision.types.js";
 import { recommendationForScore } from "../lib/compositeScoring.js";
+import {
+  buildRecommendationBoundaryAudit,
+  buildStackPenaltyAudit,
+} from "../lib/scoringAuditDiagnostics.js";
+import { assessExtractedJdSupport } from "../lib/jdTagProvenance.js";
 
 export const AUDIT_ROLE_CATEGORIES = [
   "frontend",
@@ -477,6 +482,8 @@ export type ScoringAuditContext = {
     pipelineVersionLabel: string;
     breakdown?: ReturnType<typeof breakdownView>;
     detail?: ReturnType<typeof detailView>;
+    stackPenalty?: ReturnType<typeof buildStackPenaltyAudit>;
+    recommendationBoundary?: ReturnType<typeof buildRecommendationBoundaryAudit>;
     evidenceGaps: string[];
   };
   jobDescription: {
@@ -486,6 +493,7 @@ export type ScoringAuditContext = {
     company?: string;
     textHash?: string;
     missing: boolean;
+    completeness?: ReturnType<typeof assessExtractedJdSupport>;
   };
   candidate: {
     profileIsCurrentNotHistorical: true;
@@ -519,6 +527,28 @@ export const buildScoringAuditContext = (params: {
 
   const resumeType = toActiveResumeType(fit.recommendedResume);
   const jd = evaluation.jd?.text ? capText(evaluation.jd.text, MAX_AUDIT_JD_CHARS) : undefined;
+  const extractedForAudit = fit.detail?.extracted
+    ? { ...fit.detail.extracted, rawText: evaluation.jd?.text ?? fit.detail.extracted.rawText }
+    : undefined;
+  const completeness = assessExtractedJdSupport({
+    rawText: evaluation.jd?.text ?? extractedForAudit?.rawText,
+    stack: extractedForAudit?.stack,
+    requiredSkills: extractedForAudit?.requiredSkills,
+    preferredSkills: extractedForAudit?.preferredSkills,
+  });
+  if (completeness.incomplete) evidenceGaps.push("incompleteJobDescription");
+  if (completeness.ungroundedRequirementTags.length > 0) {
+    evidenceGaps.push("ungroundedExtractedTags");
+  }
+  const hardGateFired =
+    (fit.breakdown?.hardGates ?? fit.detail?.score.scoreDisplay?.hardGates ?? []).length > 0;
+  const stackPenalty = buildStackPenaltyAudit({
+    extracted: extractedForAudit,
+    rules: fit.detail?.rules,
+    score: fit.detail?.score,
+    gapDock: fit.breakdown?.gapDock ?? fit.detail?.score.scoreDisplay?.gapDock,
+  });
+  const recommendationBoundary = buildRecommendationBoundaryAudit(presented.total, hardGateFired);
 
   return {
     readOnly: true,
@@ -539,10 +569,7 @@ export const buildScoringAuditContext = (params: {
     scoring: {
       total: presented.total,
       recommendation: presented.recommendation,
-      recommendationFromScore: recommendationForScore(
-        presented.total,
-        (fit.breakdown?.hardGates ?? fit.detail?.score.scoreDisplay?.hardGates ?? []).length > 0,
-      ),
+      recommendationFromScore: recommendationForScore(presented.total, hardGateFired),
       storedTotals: {
         fitTotal: resolved.storedFitTotal,
         detailTotal: resolved.storedDetailTotal,
@@ -556,6 +583,8 @@ export const buildScoringAuditContext = (params: {
       pipelineVersionLabel: SCORER_VERSION,
       breakdown: breakdownView(fit.breakdown),
       detail: detailView(fit.detail),
+      stackPenalty,
+      recommendationBoundary,
       evidenceGaps,
     },
     jobDescription: jd
@@ -566,8 +595,9 @@ export const buildScoringAuditContext = (params: {
           company: evaluation.jd?.company,
           textHash: evaluation.jd?.textHash,
           missing: false,
+          completeness,
         }
-      : { missing: true },
+      : { missing: true, completeness },
     candidate: {
       profileIsCurrentNotHistorical: true,
       profile: profileForAudit(profile),

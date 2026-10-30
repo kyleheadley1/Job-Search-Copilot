@@ -3,9 +3,12 @@ import type { ActionType } from "../../services/gmail/actionRequest.js";
 import {
   actionItems,
   buildApplications,
+  companyKeyFromApplicationKey,
+  filterApplicationsByLookback,
   isStageNameRole,
   matchTrackerJob,
   normalizeCompany,
+  relatedApplicationsForKey,
   roleSimilarity,
   suggestTrackerStatus,
 } from "../../services/gmail/gmailApplications.js";
@@ -92,6 +95,32 @@ describe("generic and specific titles at one company", () => {
     );
     expect(apps).toHaveLength(1);
     expect(apps[0]!.key).toBe("brellium::software engineer");
+  });
+
+  it("does not mint a role-less key when the full mailbox includes the role-bearing emails", () => {
+    const roleMail = msg("Axle", "Product Engineer", "interview", "2026-10-07T22:46:27.000Z");
+    const calendar = msg("Axle", null, "interview", "2026-10-12T18:34:52.000Z");
+    const truncated = buildApplications([calendar], []);
+    const full = buildApplications([roleMail, calendar], []);
+    expect(truncated.map((a) => a.key)).toEqual(["axle::"]);
+    expect(full.map((a) => a.key)).toEqual(["axle::product engineer"]);
+    expect(full).toHaveLength(1);
+  });
+
+  it("filters eligibility without changing grouped keys", () => {
+    const apps = buildApplications(
+      [
+        msg("Axle", "Product Engineer", "interview", "2026-10-07T22:46:27.000Z"),
+        msg("Axle", null, "interview", "2026-10-12T18:34:52.000Z"),
+        msg("InHouse", "Full Stack Engineer", "applied", "2026-10-25T12:00:00.000Z"),
+      ],
+      [],
+    );
+    const now = new Date("2026-10-30T12:00:00.000Z");
+    const recent = filterApplicationsByLookback(apps, 11, now);
+    expect(recent.map((a) => a.key)).toEqual(["inhouse::full stack engineer"]);
+    expect(relatedApplicationsForKey("axle::", apps).map((row) => row.key)).toEqual(["axle::product engineer"]);
+    expect(companyKeyFromApplicationKey("axle::product engineer")).toBe("axle");
   });
 
   it("treats a meeting name reported as the role as role-less", () => {

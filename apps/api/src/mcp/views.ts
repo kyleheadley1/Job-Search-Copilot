@@ -93,6 +93,7 @@ const evaluationView = (evaluation: ApplicationEvaluation, revision?: ApprovedRe
     // Provenance only: stage label and short fixed-vocabulary signal codes. Never attempts, candidates, notes, or URLs.
     foundVia: evaluation.recovery.foundVia,
     matchSignals: evaluation.recovery.match?.signals ? [...evaluation.recovery.match.signals] : undefined,
+    postingKind: evaluation.postingKind ?? "unknown",
     jdTitle: roleFromEvaluation(evaluation) ?? undefined,
     fitBreakdown: evaluation.fit?.breakdown ? fitBreakdownView(evaluation.fit.breakdown) : undefined,
     ...(fit ? effectiveScoreProvenance(fit) : {}),
@@ -115,6 +116,7 @@ export const toListRow = (
     lastUpdateAt: app.lastUpdateAt,
     activelyInterviewing: app.activelyInterviewing,
     fitTotal: fit?.total,
+    postingKind: evaluation?.postingKind ?? "unknown",
     ...(fit ? effectiveScoreProvenance(fit) : {}),
   };
 };

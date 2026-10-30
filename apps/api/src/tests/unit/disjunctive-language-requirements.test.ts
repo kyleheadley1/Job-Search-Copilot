@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest";
 import { userProfile } from "../../config/userProfile.js";
 import { analyzeCoreLanguageRequirement } from "../../lib/coreLanguageRequirements.js";
 import { deriveClaimableStackFromText } from "../../lib/claimableStack.js";
+import { detectBackendStackSpecializationGap } from "../../lib/capabilityGap.js";
 import {
   evaluateDisjunctiveLanguageRequirement,
+  findLiteralLeadsWithSourceQuote,
   isExclusiveCoreLanguageRequirement,
+  languageOnlyInIllustrativeExample,
+  spanLooksDisjunctive,
 } from "../../lib/disjunctiveLanguageRequirement.js";
 import { analyzeStackMismatch } from "../../lib/stackMismatchAnalysis.js";
+import { calibrationSweResumeContexts } from "../fixtures/calibrationAnchors.js";
 import type { ExtractedJobData } from "../../types/job.js";
 
 const claimableFromProfile = () =>
@@ -41,6 +46,35 @@ describe("disjunctive vs exclusive language gates", () => {
 
     const core = analyzeCoreLanguageRequirement(job, userProfile, claimable);
     expect(core.explicitHardRequirement).toBe(false);
+  });
+
+  it("treats Strong Go and Strong Java as named-language primary requirements", () => {
+    const goJob: ExtractedJobData = {
+      company: "GoPrimary",
+      title: "Backend Engineer",
+      stack: ["Go"],
+      requiredSkills: ["Go"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Build services"],
+      requirements: ["Strong Go and experience shipping production services"],
+      rawText: "Backend Engineer.\nStrong Go and experience shipping production services.",
+    };
+    const javaJob: ExtractedJobData = {
+      company: "JavaPrimary",
+      title: "Backend Engineer",
+      stack: ["Java"],
+      requiredSkills: ["Java"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Build services"],
+      requirements: ["Strong Java and experience shipping production services"],
+      rawText: "Backend Engineer.\nStrong Java and experience shipping production services.",
+    };
+    const goQuote = findLiteralLeadsWithSourceQuote(goJob, "Go");
+    const javaQuote = findLiteralLeadsWithSourceQuote(javaJob, "Java");
+    expect(goQuote).toEqual(expect.stringMatching(/Strong Go/i));
+    expect(javaQuote).toEqual(expect.stringMatching(/Strong Java/i));
   });
 
   it("still flags exclusive Go-only requirement", () => {
@@ -103,6 +137,31 @@ describe("disjunctive vs exclusive language gates", () => {
     expect(analysis.coreLanguageGap).not.toContain("Go");
   });
 
+  it("does not treat Rippling live 'professional experience with ... (e.g., Python/Go)' as Python specialization", () => {
+    const line =
+      "2+ years of professional experience with a focus on full-stack development, demonstrating the ability to deliver reliable, end-to-end products using a backend language (e.g., Python/Go) and frontend technologies like React/TypeScript.";
+    expect(spanLooksDisjunctive(line)).toBe(true);
+    const job: ExtractedJobData = {
+      company: "Rippling",
+      title: "Software Engineer II, Backend - IT Product",
+      stack: ["Python", "Go", "React", "TypeScript"],
+      requiredSkills: ["Python", "Go", "React", "TypeScript"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: [
+        "Design and implement features with an emphasis on backend logic, API development, and data integrity, while also contributing to the frontend implementation.",
+      ],
+      requirements: [line],
+      rawText: `Software Engineer II, Backend - IT Product.\n${line}`,
+    };
+    const resume = calibrationSweResumeContexts().BASE?.rawText;
+    expect(languageOnlyInIllustrativeExample(job, "Python")).toBe(true);
+    expect(findLiteralLeadsWithSourceQuote(job, "Python")).toBeNull();
+    expect(detectBackendStackSpecializationGap(job, resume)).toBeUndefined();
+    const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+    expect(analyzeStackMismatch(job, tsOnly).stackMismatch).toBe(false);
+  });
+
   it("keeps conjunctive TypeScript, Python, and React as a Python core requirement", () => {
     const job: ExtractedJobData = {
       company: "Arbital Health",
@@ -120,5 +179,62 @@ describe("disjunctive vs exclusive language gates", () => {
     const analysis = analyzeStackMismatch(job, tsOnly);
     expect(analysis.stackMismatch).toBe(true);
     expect(analysis.coreLanguageGap).toContain("Python");
+  });
+
+  it("does not treat Strong Python as an illustrative or mixed-stack inventory", () => {
+    const job: ExtractedJobData = {
+      company: "Ro",
+      title: "AI Engineer",
+      stack: ["Python", "TypeScript"],
+      requiredSkills: ["Python"],
+      preferredSkills: ["TypeScript"],
+      domainTags: [],
+      responsibilities: ["Build LLM workflows in Python"],
+      requirements: ["Strong Python and experience shipping LLM/RAG systems"],
+      rawText:
+        "AI Engineer. Build LLM workflows in Python for healthcare products. TypeScript a plus. Strong Python and experience shipping LLM/RAG systems.",
+    };
+    expect(findLiteralLeadsWithSourceQuote(job, "Python")).toMatch(/Strong Python/i);
+    expect(findLiteralLeadsWithSourceQuote(job, "TypeScript")).toBeNull();
+  });
+
+  it("still treats a genuine UJET-style Python production requirement as exclusive", () => {
+    const job: ExtractedJobData = {
+      company: "UJET",
+      title: "Backend Engineer",
+      stack: ["Python", "Django"],
+      requiredSkills: ["Python", "Django"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: ["Build production APIs"],
+      requirements: ["Professional experience with Python required"],
+      rawText: "Backend Engineer. Professional experience with Python required. Django in production.",
+    };
+    const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+    const analysis = analyzeStackMismatch(job, tsOnly);
+    expect(findLiteralLeadsWithSourceQuote(job, "Python")).toMatch(/Python/i);
+    expect(analysis.stackMismatch).toBe(true);
+    expect(analysis.coreLanguageGap).toContain("Python");
+  });
+
+  it("does not treat Meow inventory Python as a leads-with quote", () => {
+    const job: ExtractedJobData = {
+      company: "Meow",
+      title: "Software Engineer",
+      stack: ["TypeScript", "React", "Python"],
+      requiredSkills: ["TypeScript", "React", "Python"],
+      preferredSkills: [],
+      domainTags: [],
+      responsibilities: [],
+      requirements: ["Comfortable working across both front-end and back-end"],
+      rawText:
+        "Our tech stack: TypeScript, React, Python (FastAPI), Postgres, AWS. Comfortable working across both front-end and back-end.",
+    };
+    const tsOnly = deriveClaimableStackFromText("TypeScript React Node.js JavaScript");
+    const resume = calibrationSweResumeContexts().BASE?.rawText;
+    expect(findLiteralLeadsWithSourceQuote(job, "Python")).toBeNull();
+    expect(detectBackendStackSpecializationGap(job, resume)).toBeUndefined();
+    expect(analyzeStackMismatch(job, tsOnly).stackMismatch).toBe(false);
+    expect(analyzeStackMismatch(job, tsOnly).coreLanguageGap).not.toContain("Python");
   });
 });

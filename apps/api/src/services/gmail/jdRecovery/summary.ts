@@ -40,6 +40,8 @@ export type EvaluationSummary = {
   staleRevisionTotal?: number;
   recommendedResume?: StoredResumeType;
   matchLevel?: MatchLevel;
+  foundVia?: string;
+  matchSignals?: string[];
   url?: string;
 };
 
@@ -62,7 +64,10 @@ export const toEvaluationSummary = (
     reason: e.recovery.reason,
     notes: e.recovery.notes,
     attempts: e.recovery.attempts.slice(0, 10),
-    candidates: e.recovery.candidates?.map(({ text: _text, rawText: _rawText, company: _company, ...c }) => c),
+    candidates: e.recovery.candidates?.map(({ text: _text, rawText: _rawText, company: _company, evidenceSnapshot, ...c }) => ({
+      ...c,
+      evidenceSnapshot,
+    })),
     verifiedBy: e.recovery.verifiedBy,
     jdTitle: roleFromEvaluation(e) ?? undefined,
     recoveredRole: e.recovery.recoveredRole,
@@ -72,6 +77,8 @@ export const toEvaluationSummary = (
     recommendation: fit?.recommendation,
     recommendedResume: e.fit?.recommendedResume,
     matchLevel: e.recovery.match?.level,
+    foundVia: e.recovery.foundVia,
+    matchSignals: e.recovery.match?.signals ? [...e.recovery.match.signals] : undefined,
     url: e.recovery.url,
     ...(fit ? effectiveScoreProvenance(fit) : {}),
   };

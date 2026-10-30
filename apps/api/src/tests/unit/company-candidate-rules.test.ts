@@ -106,7 +106,17 @@ In person, NYC.
 
   it("rejects job-board UI section headers", () => {
     expect(isValidCompanyCandidate("Why This Job")).toBe(false);
+    expect(isValidCompanyCandidate("Why This")).toBe(false);
+    expect(isValidCompanyCandidate("What We Build")).toBe(false);
+    expect(isValidCompanyCandidate("Offers Equity")).toBe(false);
+    expect(isValidCompanyCandidate("Creator Home")).toBe(false);
+    expect(isValidCompanyCandidate("Product")).toBe(false);
     expect(isValidCompanyCandidate("Overview")).toBe(false);
+    expect(isValidCompanyCandidate("Plaid")).toBe(true);
+    expect(isValidCompanyCandidate("Patreon")).toBe(true);
+    expect(isValidCompanyCandidate("Rippling")).toBe(true);
+    expect(isValidCompanyCandidate("Afresh")).toBe(true);
+    expect(isValidCompanyCandidate("Petfolk")).toBe(true);
   });
 
   it("rejects self-description sentence starters", () => {

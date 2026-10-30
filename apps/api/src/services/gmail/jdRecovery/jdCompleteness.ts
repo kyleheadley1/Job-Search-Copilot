@@ -6,7 +6,7 @@ const MIN_SECTION_UNITS = 2;
 const DUTY_HEADING =
   /^(what you'?ll do|what you will do|responsibilities|your responsibilities|day[- ]to[- ]day|in this role|the role|about the role|about the (position|job)|duties)$/i;
 const QUAL_HEADING =
-  /^(what you'?ll bring|what you will bring|what you'?ll need|qualifications|requirements|what we'?re looking for|who you are|about you|nice to have|good to have|you should have|minimum qualifications|preferred qualifications|basic qualifications|you'?re a great fit if|you are a great fit( if)?|(the )?ideal candidate|who we'?re looking for)$/i;
+  /^(what you'?ll bring|what you will bring|what you'?ll need|qualifications|requirements|what we'?re looking for|who you are|about you|nice to have|good to have|you should have|minimum qualifications|preferred qualifications|basic qualifications|you'?re a great fit if|you are a great fit( if)?|(the )?ideal candidate|who we'?re looking for|experience we'?re looking for|(the )?experience (we'?re|you'?ll) (looking for|need)|skills we'?re looking for)$/i;
 const OTHER_HEADING =
   /^(compensation|benefits\b.*|interview process|equal opportunity|eeo|location|salary|perks|our values|who we are|what we offer|how to apply|to apply|your first few months|tech stack|about .+)$/i;
 

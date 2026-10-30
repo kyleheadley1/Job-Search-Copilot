@@ -1,5 +1,9 @@
 import type { ExtractedJobData } from "../types/job.js";
-import type { RuleEvaluation } from "../types/scoring.js";
+import type {
+  LanguageRequirementGroup,
+  LanguageRequirementGroupKind,
+  RuleEvaluation,
+} from "../types/scoring.js";
 import type { ClaimableStack } from "./claimableStack.js";
 import { hasClaimableCoverage } from "./claimableStack.js";
 import { GO_LANGUAGE_PATTERNS } from "./goLanguage.js";
@@ -103,14 +107,37 @@ const DISJUNCTIVE_LANGUAGE_CATALOG: Array<{
  * Phrasing that means "satisfying any one listed language fulfills the requirement."
  * Match on meaning — not only Fleetio-style "X, Y, and/or Z".
  */
+/**
+ * Choice-set phrasing. `e.g.` / `eg.` must not require a trailing word boundary —
+ * `e.g., Python/Go` has a comma after the period, so `e.g.\b` never matches.
+ */
 export const DISJUNCTIVE_FRAMING =
-  /\b(?:and\s*\/\s*or|\/\s*or|\bor\b|at\s+least\s+(?:one|\d+|1)\b|one\s+of(?:\s+the\s+following)?|any(?:\s+one)?\s+of|one\s+or\s+more\s+of|either\b|such\s+as|e\.g\.|including|among|from\s+the\s+following|from\b|proficiency\s+in\s+at\s+least|experience\s+with\s+any\s+of|familiarity\s+with\s+one\s+or\s+more\s+of|general[-\s]?purpose\s+programming\s+language)\b/i;
+  /(?:\b(?:and\s*\/\s*or|\/\s*or|\bor\b|at\s+least\s+(?:one|\d+|1)\b|one\s+of(?:\s+the\s+following)?|any(?:\s+one)?\s+of|one\s+or\s+more\s+of|either\b|such\s+as|including|among|from\s+the\s+following|from\b|proficiency\s+in\s+at\s+least|experience\s+with\s+any\s+of|familiarity\s+with\s+one\s+or\s+more\s+of|general[-\s]?purpose\s+programming\s+language)\b|\b(?:e\.g\.|eg\.))/i;
 
 const CHOICE_LIST_ENUM =
   /\b([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?)(?:\s*,\s*([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?)){1,12}(?:\s*,?\s*(?:and|or|and\s*\/\s*or)\s+([A-Za-z+#./]+(?:\s*[A-Za-z+#./]*)?))?/i;
 
 const EXCLUSIVE_REQUIREMENT =
   /\b(must have|required|professional experience with|strong proficiency in|strong fundamentals in|primary language is|our (?:main|primary) (?:backend )?language|leads? with)\b/i;
+
+/** "Strong Python" / "Strong Go" / "Strong Java" — named-language emphasis, not "strong coding skills". */
+const STRONG_NAMED_LANGUAGE =
+  /\b(?:strong|solid|deep|extensive)\s+(python|golang|go|java)\b/i;
+
+const PLUS_OR_PREFERRED_ON_LINE =
+  /\b(a plus|is a plus|preferred|nice[- ]to[- ]have|optionally|bonus)\b/i;
+
+const strongNamedLanguageMatches = (line: string, languageLabel: string): boolean => {
+  if (PLUS_OR_PREFERRED_ON_LINE.test(line)) return false;
+  const match = line.match(STRONG_NAMED_LANGUAGE);
+  if (!match?.[1]) return false;
+  const named = match[1].toLowerCase();
+  const want = languageLabel.toLowerCase().split("/")[0]?.trim() ?? "";
+  if (want === "python") return named === "python";
+  if (want === "go") return named === "go" || named === "golang";
+  if (want === "java") return named === "java";
+  return false;
+};
 
 /** Illustrative examples — not a closed "must match one of these" set.
  * Do not require a trailing word boundary after `e.g.` (`e.g., Python` has comma, not `\b`).
@@ -122,11 +149,36 @@ const CLOSED_CHOICE_FRAMING =
   /\b(?:at\s+least\s+(?:one|\d+|1)|one\s+of(?:\s+the\s+following)?|any(?:\s+one)?\s+of|one\s+or\s+more\s+of|proficiency\s+in\s+at\s+least|experience\s+with\s+any\s+of)\b/i;
 
 export type DisjunctiveLanguageEval = {
-  /** JD lists acceptable languages disjunctively and candidate matches ≥1 in the full set. */
+  /**
+   * True only when every mandatory alternative group is satisfied.
+   * Satisfying one group never marks an unrelated group satisfied.
+   */
   satisfied: boolean;
-  /** All languages detected in the disjunctive accepted set (never a subset). */
+  /** Languages belonging to satisfied mandatory alternative groups (full group, not a subset). */
   acceptedLabels: string[];
+  groups: LanguageRequirementGroup[];
 };
+
+const MANDATORY_ALTERNATIVE_KINDS = new Set<LanguageRequirementGroupKind>([
+  "closed_mandatory_alternatives",
+  "disjunctive_mandatory",
+]);
+
+export const groupIsMandatoryAlternative = (kind: LanguageRequirementGroupKind): boolean =>
+  MANDATORY_ALTERNATIVE_KINDS.has(kind);
+
+const KIND_PRIORITY: Record<LanguageRequirementGroupKind, number> = {
+  conjunctive_mandatory: 0,
+  closed_mandatory_alternatives: 1,
+  disjunctive_mandatory: 2,
+  mixed_stack_inventory: 3,
+  preferred: 4,
+  illustrative: 5,
+  ambiguous: 6,
+};
+
+const STACK_INVENTORY_LINE =
+  /\b(our (?:tech )?stack|tech stack\s*:|we (?:use|work with)|stack includes|technologies we use|comfortable working across both front-end and back-end)\b/i;
 
 const jobBlob = (job: ExtractedJobData): string =>
   [
@@ -164,6 +216,161 @@ const candidateCoversLanguage = (
   claimable: ClaimableStack,
 ): boolean => lang.claimableIds.some((id) => hasClaimableCoverage(claimable, id));
 
+const classifyLanguageSpan = (span: string): LanguageRequirementGroupKind | null => {
+  const langs = languagesInSpan(span);
+  if (langs.length < 2) return null;
+
+  if (PLUS_OR_PREFERRED_ON_LINE.test(span) && !/\b(required|must have|minimum)\b/i.test(span)) {
+    return "preferred";
+  }
+  if (STACK_INVENTORY_LINE.test(span)) return "mixed_stack_inventory";
+
+  const learnable =
+    /\b(?:or learning|willing to learn|comfortable (?:working in or )?learning)\b/i.test(span) &&
+    !/\b(?:at\s+least|must have|required|production experience)\b/i.test(span);
+  if (learnable) return "ambiguous";
+
+  const closed =
+    CLOSED_CHOICE_FRAMING.test(span) ||
+    /\b(?:either|at\s+least\s+(?:one|\d+|1))\b/i.test(span);
+  if (closed) return "closed_mandatory_alternatives";
+  if (ILLUSTRATIVE_EXAMPLE_FRAMING.test(span)) return "illustrative";
+  if (spanLooksDisjunctive(span)) return "disjunctive_mandatory";
+  if (
+    /\band\b/i.test(span) &&
+    !/\bor\b/i.test(span) &&
+    /\b(must have|required|strong fundamentals|proficiency in|professional experience with)\b/i.test(span)
+  ) {
+    return "conjunctive_mandatory";
+  }
+  return null;
+};
+
+/** Keep backend Go/Python and frontend React/TS as separate units when both appear. */
+const splitBackendFrontendClauses = (span: string): string[] => {
+  if (!/\bbackend\b/i.test(span) || !/\bfrontend\b/i.test(span)) return [span];
+  if (/\band\s*\/\s*or\b/i.test(span) && !/\bbackend\b[\s\S]+\bfrontend\b/i.test(span)) {
+    return [span];
+  }
+  const parts = span.split(/\band\b/i).map((part) => part.trim()).filter(Boolean);
+  const useful = parts.filter((part) => languagesInSpan(part).length >= 1);
+  return useful.length >= 2 ? useful : [span];
+};
+
+const requirementUnitsFromText = (text: string): string[] => {
+  const units: string[] = [];
+  for (const line of coalesceProse(text).split(/\n/)) {
+    for (const sentence of line.split(/(?<=[.;])\s+/)) {
+      const trimmed = sentence.trim();
+      if (!trimmed || trimmed.length > 400) continue;
+      units.push(...splitBackendFrontendClauses(trimmed));
+    }
+  }
+  return units;
+};
+
+const languageKey = (labels: string[]): string =>
+  [...labels].map((label) => label.toLowerCase()).sort().join("|");
+
+const evaluateUnitGroup = (
+  unit: string,
+  claimable: ClaimableStack,
+): LanguageRequirementGroup | null => {
+  const kind = classifyLanguageSpan(unit);
+  const langs = languagesInSpan(unit);
+  if (!kind || langs.length < 2) return null;
+  const matched = langs.filter((lang) => candidateCoversLanguage(lang, claimable));
+  const satisfied =
+    kind === "conjunctive_mandatory"
+      ? langs.every((lang) => candidateCoversLanguage(lang, claimable))
+      : matched.length > 0;
+  return {
+    kind,
+    languages: langs.map((lang) => lang.label),
+    sourceQuote: unit.slice(0, 240),
+    satisfied,
+    matchedLabels: matched.map((lang) => lang.label),
+  };
+};
+
+const isSoftGroupKind = (kind: LanguageRequirementGroupKind): boolean =>
+  kind === "preferred" || kind === "illustrative" || kind === "mixed_stack_inventory";
+
+const keepStrongerGroup = (
+  current: LanguageRequirementGroup | undefined,
+  next: LanguageRequirementGroup,
+): LanguageRequirementGroup => {
+  if (!current) return next;
+  if (isSoftGroupKind(next.kind) && !isSoftGroupKind(current.kind)) return current;
+  if (!isSoftGroupKind(next.kind) && isSoftGroupKind(current.kind)) return next;
+  const closed =
+    current.kind === "closed_mandatory_alternatives" || next.kind === "closed_mandatory_alternatives";
+  if ((current.kind === "ambiguous" || next.kind === "ambiguous") && !closed) {
+    return current.kind === "ambiguous" ? current : next;
+  }
+  if (KIND_PRIORITY[next.kind] < KIND_PRIORITY[current.kind]) return next;
+  if (KIND_PRIORITY[next.kind] === KIND_PRIORITY[current.kind] && next.sourceQuote.length < current.sourceQuote.length) {
+    return next;
+  }
+  return current;
+};
+
+export const languageOnlyInNonMandatoryGroup = (
+  disjunctive: DisjunctiveLanguageEval,
+  languageLabel: string,
+): boolean => {
+  const fold = (value: string): string => value.toLowerCase().split("/")[0]?.trim() ?? "";
+  const want = fold(languageLabel);
+  if (!want) return false;
+  const hits = disjunctive.groups.filter((group) =>
+    group.languages.some((label) => fold(label) === want),
+  );
+  return (
+    hits.length > 0 &&
+    hits.every(
+      (group) =>
+        group.kind === "ambiguous" ||
+        group.kind === "preferred" ||
+        group.kind === "illustrative" ||
+        group.kind === "mixed_stack_inventory",
+    )
+  );
+};
+
+/** Independent requirement groups with quotes. Does not merge unrelated language sets. */
+export const extractLanguageRequirementGroups = (
+  job: ExtractedJobData,
+  claimable: ClaimableStack,
+): LanguageRequirementGroup[] => {
+  const units = [
+    ...requirementUnitsFromText(jobBlob(job)),
+    ...requirementLinesForDisjunctive(job).flatMap((line) => splitBackendFrontendClauses(line)),
+  ];
+  const byKey = new Map<string, LanguageRequirementGroup>();
+  for (const unit of units) {
+    const group = evaluateUnitGroup(unit, claimable);
+    if (!group) continue;
+    const key = languageKey(group.languages);
+    byKey.set(key, keepStrongerGroup(byKey.get(key), group));
+  }
+  return [...byKey.values()];
+};
+
+export const languageClearedBySatisfiedDisjunctiveGroup = (
+  disjunctive: DisjunctiveLanguageEval,
+  languageLabel: string,
+): boolean => {
+  const fold = (value: string): string => value.toLowerCase().split("/")[0]?.trim() ?? "";
+  const want = fold(languageLabel);
+  if (!want) return false;
+  return disjunctive.groups.some(
+    (group) =>
+      group.satisfied &&
+      groupIsMandatoryAlternative(group.kind) &&
+      group.languages.some((label) => fold(label) === want),
+  );
+};
+
 /**
  * True when a span is a choice-set (any one satisfies), not a conjunction of must-haves.
  * "Python, Java, and C++" after "at least one … from" is disjunctive; bare "Python and Java required" is not.
@@ -179,11 +386,11 @@ export const spanLooksDisjunctive = (span: string): boolean => {
   // Explicit and/or or comma-or lists.
   if (/\band\s*\/\s*or\b/i.test(t) || /,\s*or\b/i.test(t)) return true;
 
-  // "from A, B, and C" / "among A, B, or C" choice enumerations.
+  // "from A, B, and C" / "among A, B, or C" / "(e.g., Python/Go)" choice enumerations.
   if (
-    /\b(?:from|among|including|such as|e\.g\.)\b/i.test(t) &&
+    (/\b(?:from|among|including|such as)\b/i.test(t) || ILLUSTRATIVE_EXAMPLE_FRAMING.test(t)) &&
     langs.length >= 2 &&
-    (CHOICE_LIST_ENUM.test(t) || /\bor\b/i.test(t))
+    (CHOICE_LIST_ENUM.test(t) || /\bor\b/i.test(t) || /[/]/.test(t))
   ) {
     return true;
   }
@@ -203,6 +410,11 @@ export const extractDisjunctiveLanguageSpans = (blob: string): string[] => {
     /(?:at\s+least\s+(?:one|\d+|1)|one\s+of(?:\s+the\s+following)?|any(?:\s+one)?\s+of|such\s+as|e\.g\.|including|from)[^.\n]{0,80}[\(:][^)\]]{5,400}[\)\]]/gi,
   );
   if (parenLists) spans.push(...parenLists);
+  // `(e.g., Python/Go)` — the parenthesis wraps the example, rather than following `e.g.`.
+  const wrappedExamples = coalesced.match(
+    /\([^)\]]{0,40}(?:e\.g\.|eg\.|such as)[^)\]]{3,200}\)/gi,
+  );
+  if (wrappedExamples) spans.push(...wrappedExamples);
 
   // Cross-line / long-sentence: at least one … from A, B, and C
   const atLeastFrom = coalesced.match(
@@ -256,44 +468,23 @@ const requirementLinesForDisjunctive = (job: ExtractedJobData): string[] => {
 };
 
 /**
- * True when the JD accepts any of a listed language set and the candidate claimable stack
- * includes at least one member of that full set.
+ * True when every mandatory alternative group is satisfied independently.
+ * A matched frontend/JS group never clears a separate Python/Java/C++ or Go/Python group.
  */
 export const evaluateDisjunctiveLanguageRequirement = (
   job: ExtractedJobData,
   claimable: ClaimableStack,
 ): DisjunctiveLanguageEval => {
-  const spans = [
-    ...requirementLinesForDisjunctive(job),
-    ...extractDisjunctiveLanguageSpans(jobBlob(job)),
+  const groups = extractLanguageRequirementGroups(job, claimable);
+  const mandatoryAlts = groups.filter((group) => groupIsMandatoryAlternative(group.kind));
+  const acceptedLabels = [
+    ...new Set(mandatoryAlts.filter((group) => group.satisfied).flatMap((group) => group.languages)),
   ];
-
-  let bestAccepted: string[] = [];
-
-  for (const span of spans) {
-    if (!spanLooksDisjunctive(span)) continue;
-    const langs = languagesInSpan(span);
-    if (langs.length < 2) continue;
-
-    const labels = langs.map((l) => l.label);
-    const candidateMatches = langs.some((l) => candidateCoversLanguage(l, claimable));
-
-    if (candidateMatches && labels.length > bestAccepted.length) {
-      bestAccepted = labels;
-    }
-  }
-
-  if (bestAccepted.length >= 2) {
-    const matched = DISJUNCTIVE_LANGUAGE_CATALOG.filter(
-      (l) => bestAccepted.includes(l.label) && candidateCoversLanguage(l, claimable),
-    );
-    return {
-      satisfied: matched.length > 0,
-      acceptedLabels: bestAccepted,
-    };
-  }
-
-  return { satisfied: false, acceptedLabels: [] };
+  return {
+    satisfied: mandatoryAlts.length > 0 && mandatoryAlts.every((group) => group.satisfied),
+    acceptedLabels,
+    groups,
+  };
 };
 
 /** Exclusive single-language requirement with no acceptable alternatives in the same clause. */
@@ -341,6 +532,40 @@ export const languageOnlyInDisjunctiveChoice = (
   return spans.some(
     (span) => spanLooksDisjunctive(span) && entry.patterns.some((re) => re.test(span)),
   );
+};
+
+/** True when the language appears only inside `e.g.` / `such as` examples, not in the binding prefix. */
+export const languageOnlyInIllustrativeExample = (
+  job: ExtractedJobData,
+  languageLabel: string,
+): boolean => {
+  const entry = DISJUNCTIVE_LANGUAGE_CATALOG.find(
+    (l) => l.label.toLowerCase() === languageLabel.toLowerCase().split("/")[0]?.trim(),
+  );
+  const mentions = (text: string): boolean =>
+    entry
+      ? entry.patterns.some((pattern) => pattern.test(text))
+      : new RegExp(`\\b${languageLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text);
+
+  const lines = coalesceProse(
+    [job.rawText ?? "", ...(job.requirements ?? []), ...(job.responsibilities ?? [])].join("\n"),
+  ).split(/\n/);
+
+  let seenInIllustrative = false;
+  let seenOutside = false;
+  for (const line of lines) {
+    if (!mentions(line)) continue;
+    const match = line.match(ILLUSTRATIVE_EXAMPLE_FRAMING);
+    if (!match || match.index == null) {
+      seenOutside = true;
+      continue;
+    }
+    const before = line.slice(0, match.index);
+    const example = line.slice(match.index);
+    if (mentions(before)) seenOutside = true;
+    if (mentions(example)) seenInIllustrative = true;
+  }
+  return seenInIllustrative && !seenOutside;
 };
 
 const languageAppearsInConjunctiveRequirement = (
@@ -435,25 +660,19 @@ export const lineDisjunctiveRequirementSatisfied = (
   return langs.some((l) => candidateCoversLanguage(l, claimable));
 };
 
-/** Remove stack gaps that only arise from a satisfied disjunctive accepted set. */
+/** Remove stack gaps that belong to a satisfied alternative group. Unrelated groups stay. */
 export const filterGapsAfterDisjunctiveMatch = (
   coreLanguageGap: string[],
   disjunctive: DisjunctiveLanguageEval,
-): string[] => {
-  if (!disjunctive.satisfied || disjunctive.acceptedLabels.length === 0) return coreLanguageGap;
-  const accepted = new Set(disjunctive.acceptedLabels.map((l) => l.toLowerCase()));
-  return coreLanguageGap.filter((g) => !accepted.has(g.toLowerCase()));
-};
+): string[] =>
+  coreLanguageGap.filter((gap) => !languageClearedBySatisfiedDisjunctiveGroup(disjunctive, gap));
 
-/** Out-of-lane language labels that appear only in a satisfied disjunctive set should not flag. */
+/** Out-of-lane language labels that belong to a satisfied alternative group should not flag. */
 export const filterOutOfLaneAfterDisjunctiveMatch = (
   labels: string[],
   disjunctive: DisjunctiveLanguageEval,
-): string[] => {
-  if (!disjunctive.satisfied) return labels;
-  const accepted = new Set(disjunctive.acceptedLabels.map((l) => l.toLowerCase()));
-  return labels.filter((l) => !accepted.has(l.toLowerCase()));
-};
+): string[] =>
+  labels.filter((label) => !languageClearedBySatisfiedDisjunctiveGroup(disjunctive, label));
 
 const DISJUNCTIVE_GAP_FRAMING =
   /\b(no|without|lacks?|missing|not demonstrated|not listed|not in|unmet|gap|required core language|primary accepted|lists .{0,48} as (?:a )?(?:primary|required|common|accepted)|outside (?:the|your|claimable)|mismatch|weak(?:ness)?|limited|absent)\b/i;
@@ -522,6 +741,8 @@ export const findLiteralLeadsWithSourceQuote = (
   const langNeedle =
     entry?.patterns[0] ??
     new RegExp(`\\b${languageLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  const mentionsLanguage = (line: string): boolean =>
+    entry ? entry.patterns.some((pattern) => pattern.test(line)) : langNeedle.test(line);
 
   const LEADS_WITH_LITERAL =
     /\b(?:leads?\s+with|primary\s+(?:backend\s+)?language|our\s+(?:main|primary)\s+(?:backend\s+)?language|backend\s+(?:is|in|using)|written\s+(?:primarily\s+)?in)\b/i;
@@ -531,10 +752,16 @@ export const findLiteralLeadsWithSourceQuote = (
   ).split(/\n/);
 
   for (const line of lines) {
-    if (!langNeedle.test(line)) continue;
+    const strongNamed = strongNamedLanguageMatches(line, languageLabel);
+    if (!mentionsLanguage(line) && !strongNamed) continue;
     if (spanLooksDisjunctive(line)) continue;
+    if (languageOnlyInIllustrativeExample(job, entry?.label ?? languageLabel)) continue;
     if (languageOnlyInDisjunctiveChoice(job, entry?.label ?? languageLabel)) continue;
-    if (LEADS_WITH_LITERAL.test(line) || EXCLUSIVE_REQUIREMENT.test(line)) {
+    if (
+      LEADS_WITH_LITERAL.test(line) ||
+      EXCLUSIVE_REQUIREMENT.test(line) ||
+      strongNamedLanguageMatches(line, languageLabel)
+    ) {
       return line.trim().slice(0, 240);
     }
     // Exclusive production/backend stack statement (not a choice list).

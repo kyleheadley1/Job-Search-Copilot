@@ -13,6 +13,9 @@ import type {
   RecoveryStart,
   ScoringReport,
   ScoreRevisionView,
+  JdRemovalReason,
+  JdReviewQueueResponse,
+  JdShadowReport,
 } from "../types/gmail";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
@@ -147,10 +150,40 @@ export const api = {
       cache: "no-store",
       body: JSON.stringify({ days }),
     }),
+  gmailJdReviews: () => request<JdReviewQueueResponse>("/gmail/jd-reviews", { cache: "no-store" }),
+  gmailJdShadowReport: () => request<JdShadowReport>("/gmail/jd-reviews/shadow-report", { cache: "no-store" }),
   gmailConfirmCandidate: (key: string, pick: { url?: string; prospectId?: string }) =>
     request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/confirm`, {
       method: "POST",
       body: JSON.stringify(pick),
+    }),
+  gmailRejectCandidate: (key: string, pick: { url?: string; prospectId?: string; note?: string }) =>
+    request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/candidates/reject`, {
+      method: "POST",
+      body: JSON.stringify(pick),
+    }),
+  gmailRemoveCandidate: (
+    key: string,
+    pick: { url?: string; prospectId?: string; reason: JdRemovalReason },
+  ) =>
+    request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/candidates/remove`, {
+      method: "POST",
+      body: JSON.stringify(pick),
+    }),
+  gmailRestoreCandidate: (key: string, pick: { url?: string; prospectId?: string }) =>
+    request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/candidates/restore`, {
+      method: "POST",
+      body: JSON.stringify(pick),
+    }),
+  gmailRevalidateCandidateCompleteness: (key: string, url: string) =>
+    request<{
+      updated: boolean;
+      completeness: "full" | "partial";
+      scoringEligible: boolean;
+      evaluation?: EvaluationSummary;
+    }>(`/gmail/evaluations/${encodeURIComponent(key)}/candidates/revalidate-completeness`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
     }),
   gmailDismissAction: (emailId: string) =>
     request<void>(`/gmail/actions/${encodeURIComponent(emailId)}/dismiss`, { method: "POST" }),

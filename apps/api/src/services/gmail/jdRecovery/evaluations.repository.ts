@@ -5,6 +5,8 @@ import type { RuleEvaluation, ScoreBreakdown } from "../../../types/scoring.js";
 import type { ApplicationStatus } from "../gmailApplications.js";
 import type { InterviewBrief } from "../interviewBrief.js";
 import type { EvidenceSource, MatchLevel } from "./assessJdMatch.js";
+import type { JdMatchEvidenceSnapshot } from "./jdMatchEvidence.js";
+import type { PostingKind } from "./postingKind.js";
 
 export type RecoveryStatus = "scored" | "unverified" | "not_found" | "fetch_failed";
 
@@ -50,6 +52,18 @@ export type RecoveryCandidate = {
   sourceType?: JdSourceType;
   retrievedAt?: string;
   matchEvidence?: string[];
+  requisitionId?: string;
+  datePosted?: string;
+  claudeConfidence?: number;
+  competingPostings?: Array<{ url: string; title?: string }>;
+  /** Absent or pending = still in the review queue. Rejected/removed candidates stay stored but are not confirmable until restored. */
+  reviewStatus?: "pending" | "rejected" | "removed";
+  removedAt?: string;
+  removalReason?: "listing_unavailable" | "no_usable_jd" | "wrong_posting" | "wrong_location" | "other";
+  /** User asked to keep a geographically excluded candidate in the active review list. */
+  geoOverride?: boolean;
+  /** Immutable match-evidence capture from submit time. Never overwritten by later edits. */
+  evidenceSnapshot?: JdMatchEvidenceSnapshot;
 };
 
 /** What a confirmed company board held, so "not found" can say "closed" vs "title didn't match". */
@@ -90,12 +104,23 @@ export type ScoringDiagnostic = {
 
 export type OutcomeHistoryEntry = { status: ApplicationStatus; at: string };
 
+export { POSTING_KINDS, type PostingKind } from "./postingKind.js";
+
 export type ApplicationEvaluation = {
   key: string;
   company: string;
   role: string | null;
   appliedAt: string;
   requisitionId?: string;
+  /**
+   * Explicit classification of the underlying requisition. Absent means unknown.
+   * Never inferred from completeness alone. talent_pool_or_event is excluded from
+   * JD recovery and must not be scored until restored to job_posting or unknown.
+   */
+  postingKind?: PostingKind;
+  postingKindReason?: string;
+  postingKindUpdatedAt?: string;
+  postingKindSource?: "explicit";
   /** Pipeline version that produced this row; older unscored rows are retried. */
   recoveryVersion?: number;
   recovery: {
@@ -194,6 +219,19 @@ export const evaluationsRepository = {
   async listSince(sinceIso: string): Promise<ApplicationEvaluation[]> {
     const col = await this.collection();
     const docs = await col.find({ appliedAt: { $gte: sinceIso } }).sort({ appliedAt: -1 }).toArray();
+    return docs.map(strip);
+  },
+
+  /** Unscored evaluations that still have stored JD candidates (active, removed, or rejected). */
+  async listPendingJdReviews(): Promise<ApplicationEvaluation[]> {
+    const col = await this.collection();
+    const docs = await col
+      .find({
+        "recovery.status": { $ne: "scored" },
+        "recovery.candidates.0": { $exists: true },
+      })
+      .sort({ appliedAt: -1 })
+      .toArray();
     return docs.map(strip);
   },
 

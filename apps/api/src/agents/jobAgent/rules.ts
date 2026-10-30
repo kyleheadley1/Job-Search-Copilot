@@ -904,6 +904,7 @@ export const evaluateRules = (
     goDistributedDataInfraCandidateGap,
     disjunctiveLanguageRequirementSatisfied: disjunctiveLanguage.satisfied,
     disjunctiveAcceptedLanguages: disjunctiveLanguage.acceptedLabels,
+    disjunctiveLanguageGroups: disjunctiveLanguage.groups,
     eligibilityFlag: geoEligibility.eligibilityFlag,
     clearanceEligibilityFlag: clearanceCitizenship.clearanceEligibilityFlag,
     clearanceRequiresExistingPenalty: clearanceCitizenship.clearanceRequiresExistingPenalty,

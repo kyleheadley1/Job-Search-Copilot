@@ -26,6 +26,24 @@ export type HardRuleFlag = {
   citedLanguages?: string[];
 };
 
+/** Independent JD language-requirement cluster. Evaluated against the resume on its own. */
+export type LanguageRequirementGroupKind =
+  | "closed_mandatory_alternatives"
+  | "disjunctive_mandatory"
+  | "conjunctive_mandatory"
+  | "illustrative"
+  | "preferred"
+  | "mixed_stack_inventory"
+  | "ambiguous";
+
+export type LanguageRequirementGroup = {
+  kind: LanguageRequirementGroupKind;
+  languages: string[];
+  sourceQuote: string;
+  satisfied: boolean;
+  matchedLabels: string[];
+};
+
 export type CapabilityGap = {
   kind: "specialization" | "stack_depth";
   reason: string;
@@ -361,6 +379,8 @@ export type RuleEvaluation = {
   /** JD accepts any of a listed language set; candidate matches ≥1 — no core-language gate. */
   disjunctiveLanguageRequirementSatisfied?: boolean;
   disjunctiveAcceptedLanguages?: string[];
+  /** Independent language-requirement groups with per-group satisfaction. */
+  disjunctiveLanguageGroups?: LanguageRequirementGroup[];
   /** Named product/platform from "must have experience with X" absent from candidate background. */
   namedHardRequirementGaps?: string[];
   notes: string[];

@@ -826,6 +826,11 @@ const scoreUserPosting = async (
   if (evaluation.recovery.status === "scored") {
     throw new AlreadyScoredError(`${evaluation.key} is already scored; scores are final`);
   }
+  if (evaluation.postingKind === "talent_pool_or_event") {
+    throw new IncompleteJdError(
+      `${evaluation.key} is classified as a talent-pool or event registration and is not eligible to score`,
+    );
+  }
   const job = await scoreBlind(posting, evaluation.company, evaluation.key);
   const now = new Date().toISOString();
   const title =

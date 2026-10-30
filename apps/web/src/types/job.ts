@@ -93,6 +93,13 @@ export type RuleEvaluation = {
   jdProhibitsGenAI?: boolean;
   disjunctiveLanguageRequirementSatisfied?: boolean;
   disjunctiveAcceptedLanguages?: string[];
+  disjunctiveLanguageGroups?: Array<{
+    kind: string;
+    languages: string[];
+    sourceQuote: string;
+    satisfied: boolean;
+    matchedLabels: string[];
+  }>;
   notes: string[];
 };
 
