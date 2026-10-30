@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 390" role="img" aria-labelledby="archTitle archDesc">
+  <title id="archTitle">Job Search Copilot architecture</title>
+  <desc id="archDesc">React dashboard and Chrome extension talk to a Node.js TypeScript API, which uses MongoDB, the Gmail API, and an MCP server for external AI tools.</desc>
+  <rect width="840" height="390" rx="18" fill="#f6f4ef" stroke="#d9d3c7"/>
+  <rect x="48" y="28" width="744" height="86" rx="14" fill="#fff" stroke="#d9d3c7"/>
+  <text x="420" y="62" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#1c1917">React Dashboard + Chrome Extension</text>
+  <text x="420" y="88" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" fill="#57534e">Review, capture, application tracking, approvals</text>
+  <path d="M420 122v18" stroke="#78716c" stroke-width="1.6" fill="none"/>
+  <path d="M414 134l6 10 6-10" fill="#78716c"/>
+  <rect x="120" y="152" width="600" height="86" rx="14" fill="#fff" stroke="#d9d3c7"/>
+  <text x="420" y="186" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#1c1917">Node.js / TypeScript API</text>
+  <text x="420" y="212" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" fill="#57534e">Matching, scoring, Gmail sync, recovery orchestration</text>
+  <g fill="none" stroke="#44403c" stroke-width="1.6">
+    <ellipse cx="168" cy="264" rx="16" ry="6"/>
+    <path d="M152 264v18c0 3.4 7.2 6 16 6s16-2.6 16-6v-18"/>
+    <rect x="404" y="258" width="32" height="22" rx="3"/>
+    <path d="M404 266h32"/>
+    <path d="M656 268h10l4-8h18l4 8h10v16H656z"/>
+    <circle cx="683" cy="276" r="2.4" fill="#44403c" stroke="none"/>
+  </g>
+  <g font-family="ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <text x="168" y="306" font-size="15" font-weight="700" fill="#1c1917">MongoDB</text>
+    <text x="168" y="326" font-size="13" fill="#57534e">Persistent state</text>
+    <text x="420" y="306" font-size="15" font-weight="700" fill="#1c1917">Gmail API</text>
+    <text x="420" y="326" font-size="13" fill="#57534e">Application data</text>
+    <text x="672" y="306" font-size="15" font-weight="700" fill="#1c1917">MCP Server</text>
+    <text x="672" y="326" font-size="13" fill="#57534e">External AI tools</text>
+  </g>
+  <text x="420" y="366" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#78716c">Illustrative architecture based on the README, not a complete internal service diagram.</text>
+</svg>
