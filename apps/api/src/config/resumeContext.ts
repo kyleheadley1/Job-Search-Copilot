@@ -24,6 +24,10 @@ export const resumeFilePaths: ResumePathMap = {
     txt: path.join(resumeContextDir, "ai_resume.txt"),
     pdf: path.join(resumeContextDir, "ai_resume.pdf"),
   },
+  FDE: {
+    txt: path.join(resumeContextDir, "fde_resume.txt"),
+    pdf: path.join(resumeContextDir, "fde_resume.pdf"),
+  },
 };
 
 export const resolveResumeCandidatePaths = (type: ResumeType): string[] => [

@@ -1,4 +1,4 @@
-export const RESUME_TYPES = ["BASE", "AI"] as const;
+export const RESUME_TYPES = ["BASE", "AI", "FDE"] as const;
 export type ResumeType = (typeof RESUME_TYPES)[number];
 
 /** Resume variants retired on 2026-10-01; still present on older stored jobs. */

@@ -52,11 +52,13 @@ const CLAIM_PATTERNS: Array<{ claim: string; re: RegExp }> = [
 const ROLE_SHAPES: Record<ResumeType, ResumeRoleShape[]> = {
   BASE: ["product_fullstack", "early_career"],
   AI: ["applied_ai", "product_fullstack"],
+  FDE: ["integration_delivery", "product_fullstack", "applied_ai"],
 };
 
 const AVOID_USE_CASES: Record<ResumeType, string[]> = {
   BASE: ["Roles whose core work is LLM/RAG/agent systems (use AI)", "Deep platform/SRE ownership claims"],
   AI: ["General product/full-stack roles with no AI component", "ML research or model-training roles (no training experience)"],
+  FDE: ["Roles whose core work is LLM evaluation or agent research (use AI)", "Deep platform/SRE ownership claims"],
 };
 
 const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n - 3)}...`);
@@ -131,7 +133,9 @@ const inferThemes = (type: ResumeType, raw: string): string[] => {
   const seeds =
     type === "AI"
       ? ["rag systems", "llm evaluation", "agentic workflows", "ai-enabled product engineering"]
-      : ["api-first product engineering", "backend-leaning full-stack", "internal tools", "pragmatic delivery"];
+      : type === "FDE"
+        ? ["third-party integrations", "internal tools and automation", "stakeholder-facing delivery", "practical ai workflows"]
+        : ["api-first product engineering", "backend-leaning full-stack", "internal tools", "pragmatic delivery"];
   if (type === "BASE" && /\bllm|ai[-\s]?enabled|rag\b/i.test(lower)) seeds.push("ai-enabled workflows");
   return seeds;
 };

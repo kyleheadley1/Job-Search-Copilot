@@ -175,10 +175,11 @@ ${JSON.stringify(params.scoringPolicy, null, 2)}
 `.trim();
 
 export const resumeSelectionSystemPrompt = `
-Choose one resume type: BASE or AI.
+Choose one resume type: BASE, AI, or FDE.
 Rules:
 - AI when building LLM, RAG, retrieval/search, agent, or AI-evaluation systems is core to the day-to-day work (AI engineer, applied AI, AI product engineer, or a full-stack role whose product is AI-centric).
-- BASE for general product, full-stack, backend, internal-tools, and junior/associate roles, including roles that only mention AI as a nice-to-have.
+- FDE for forward-deployed, solutions, implementation, and application engineering roles, and roles whose core work is third-party integrations, data sync between systems, internal tools or automation for operations/clinical/GTM teams, or delivering directly with non-technical stakeholders or customers. AI may be present but is practical workflow tooling, not the research focus.
+- BASE for general product, full-stack, backend, and junior/associate roles without an integration or stakeholder-delivery emphasis, including roles that only mention AI as a nice-to-have.
 - Do not pick AI for ML research or model-training roles; the candidate has no training/fine-tuning experience.
 - Use role shape and expected recruiter screen; do not choose from title alone.
 - Output valid JSON only.
@@ -194,7 +195,7 @@ export const buildResumeSelectionPrompt = (params: {
 Select the best resume profile and explain why.
 Return:
 {
-  "recommendedResume": "BASE|AI",
+  "recommendedResume": "BASE|AI|FDE",
   "confidence": number 0-1,
   "rationale": string[]
 }
@@ -233,6 +234,13 @@ Grounding and honesty (non-negotiable):
 `.trim();
 
 export const buildResumeAngleBlock = (resume: StoredResumeType): string => {
+  if (toActiveResumeType(resume) === 'FDE') {
+    return `
+Resume angle: FDE (integrations, internal tools, and applied AI delivery).
+Emphasize: turning operational needs into working software, third-party integrations (REST, OAuth, Gmail, MCP), internal tools used by real teams, approval-gated AI agents, and clear communication with non-technical stakeholders from nine years of operations work.
+Avoid: claiming customer-facing consulting tenure, on-site deployments, or enterprise scale not in the profile.
+`.trim();
+  }
   if (toActiveResumeType(resume) === 'AI') {
     return `
 Resume angle: AI (AI-enabled application engineering).

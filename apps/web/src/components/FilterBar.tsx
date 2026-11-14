@@ -65,6 +65,7 @@ export const FilterBar = ({
         <option value="">All</option>
         <option value="BASE">BASE</option>
         <option value="AI">AI</option>
+        <option value="FDE">FDE</option>
         <option value="SWE">SWE (legacy)</option>
         <option value="SIE">SIE (legacy)</option>
         <option value="EARLY_CAREER">EARLY_CAREER (legacy)</option>

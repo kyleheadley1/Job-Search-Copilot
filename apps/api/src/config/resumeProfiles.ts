@@ -42,4 +42,25 @@ export const resumeProfiles: ResumeProfile[] = [
       "Evidence is measurable (eval metrics, benchmarks, before/after results).",
     ],
   },
+  {
+    type: "FDE",
+    label: "Integrations & Applied AI (FDE)",
+    bestFor: [
+      "Forward-deployed, solutions, implementation, and application engineering",
+      "Integration-heavy roles: third-party APIs, data sync, connecting systems",
+      "Internal tools and automation built for operations, clinical, or GTM teams",
+      "Roles working directly with non-technical stakeholders or customers",
+      "Applied AI delivered as practical workflows rather than AI research",
+    ],
+    avoidFor: [
+      "Roles whose core work is LLM evaluation, retrieval, or agent research (use AI)",
+      "General product engineering with no integration or stakeholder emphasis (use BASE)",
+    ],
+    summaryStyle: "Full-stack engineer who turns operational needs into working software: integrations, internal tools, and AI-powered workflows.",
+    emphasisKeywords: ["integrations", "REST APIs", "OAuth", "MCP", "internal tools", "automation", "stakeholders", "TypeScript"],
+    exampleRationale: [
+      "Role centers on integrations, internal tools, or stakeholder-facing delivery; the FDE resume leads with that work.",
+      "AI agents and MCP appear as practical tooling with human approval, not research.",
+    ],
+  },
 ];

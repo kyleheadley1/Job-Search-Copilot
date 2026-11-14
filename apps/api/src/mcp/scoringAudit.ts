@@ -109,7 +109,7 @@ export const SCORING_MODEL_FOR_AUDIT = {
     overallApplicationPriority: "recommendation tier + tracker priority derived from that tier",
   },
   resumeSelection:
-    "Deterministic preview (AI vs BASE from title/body signals) then optional LLM tie-break. Survivability is recomputed if the final variant differs.",
+    "Deterministic preview (BASE, AI, or FDE from title/body signals) then optional LLM tie-break. Survivability is recomputed if the final variant differs.",
   scorerEntryPoints: {
     triageJob: "Canonical pipeline: extract → rules → scoreJob → resume select → composite → display",
     scoreBlind: "Gmail/recovery wrapper: triageJob(rawText, companyHint) with no email or outcome",

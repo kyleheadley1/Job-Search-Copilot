@@ -91,10 +91,10 @@ describe("triage from raw pasted text (no structured hand-build)", () => {
     );
   });
 
-  it("C. forward-deployed / integration role: BASE resume, score well above bank", async () => {
+  it("C. forward-deployed / integration role: FDE resume, score well above bank", async () => {
     const bank = await triageJob({ rawText: BAD_BANK_NEW_GRAD, companyHint: "Heritage Bank", fullPrep: false });
     const job = await triageJob({ rawText: SIE_ROLE, companyHint: "DeployCo", fullPrep: false });
-    expect(job.recommendedResume).toBe("BASE");
+    expect(job.recommendedResume).toBe("FDE");
     expect(job.extracted.salary?.min).toBe(140000);
     expect(job.extracted.salary?.max).toBe(200000);
     expect(job.score.total - bank.score.total).toBeGreaterThanOrEqual(10);
@@ -127,7 +127,7 @@ describe("raw-text score separation regressions", () => {
     expect(bank.tracker.shortlist).toBe(false);
 
     expect(startup.recommendedResume).toBe("BASE");
-    expect(sie.recommendedResume).toBe("BASE");
+    expect(sie.recommendedResume).toBe("FDE");
     expect(early.recommendedResume).toBe("BASE");
   });
 });

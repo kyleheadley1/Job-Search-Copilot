@@ -3,6 +3,7 @@
  *
  *   npx tsx scripts/extract-resume-text.mts BASE /path/to/your-base-resume.pdf
  *   npx tsx scripts/extract-resume-text.mts AI /path/to/your-ai-resume.pdf
+ *   npx tsx scripts/extract-resume-text.mts FDE /path/to/your-fde-resume.pdf
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -14,7 +15,7 @@ const MIN_RESUME_CHARS = 1500;
 
 const [type, source] = process.argv.slice(2);
 if (!isActiveResumeType(type) || !source) {
-  console.error("Usage: extract-resume-text.mts <BASE|AI> <path/to/resume.pdf>");
+  console.error("Usage: extract-resume-text.mts <BASE|AI|FDE> <path/to/resume.pdf>");
   process.exit(1);
 }
 

@@ -49,8 +49,21 @@ export const deterministicResumeSelection = (
     aiScore += Math.sign(overlap("AI") - overlap("BASE"));
   }
 
-  const recommendedResume: ResumeType = aiScore >= AI_THRESHOLD ? "AI" : "BASE";
-  const ambiguous = aiScore === AI_THRESHOLD - 1 || aiScore === AI_THRESHOLD;
+  const titleIsFde = FDE_TITLE_RE.test(title);
+  const fdeHits = FDE_CORE_SIGNALS.filter((re) => re.test(body)).length;
+  const fdeAvailable = !resumeContexts || Boolean(resumeContexts.FDE);
+
+  // FDE title wins (a "Forward Deployed AI Engineer" still wants the integration-led resume);
+  // otherwise AI-core roles keep AI, and integration/internal-tools-heavy roles get FDE.
+  let recommendedResume: ResumeType;
+  if (fdeAvailable && titleIsFde) recommendedResume = "FDE";
+  else if (aiScore >= AI_THRESHOLD) recommendedResume = "AI";
+  else if (fdeAvailable && fdeHits >= FDE_THRESHOLD) recommendedResume = "FDE";
+  else recommendedResume = "BASE";
+
+  const aiBorderline = aiScore === AI_THRESHOLD - 1 || aiScore === AI_THRESHOLD;
+  const fdeBorderline = fdeAvailable && !titleIsFde && fdeHits === FDE_THRESHOLD - 1;
+  const ambiguous = !titleIsFde && (aiBorderline || fdeBorderline);
   const profile = resumeProfiles.find((r) => r.type === recommendedResume);
   return {
     recommendedResume,
@@ -78,6 +91,22 @@ const AI_CORE_SIGNALS: RegExp[] = [
 
 /** title (+4) plus ~1 core signal, or 3+ core signals without an AI title. */
 const AI_THRESHOLD = 3;
+
+const FDE_TITLE_RE =
+  /\b(forward[-\s]deployed|solutions? engineer(ing)?|implementation engineer|integrations? engineer|application engineer|deployment engineer|internal tools)\b/i;
+
+/** Distinct signals that integrations, internal tooling, or stakeholder-facing delivery is the core of the job. */
+const FDE_CORE_SIGNALS: RegExp[] = [
+  /\bthird[-\s]party (systems?|apis?|integrations?|services?|data)\b|\bintegrations? (challenges|frameworks?|across)\b|\bconnect(ing)? (third[-\s]party )?systems\b/i,
+  /\binternal (tools?|tooling|applications?|apps?|platforms?)\b/i,
+  /\b(synchroni[sz]e|sync(ing)?) (patient |customer |user )?data\b|\bdata sync\b/i,
+  /\bautomat(e|ing|ion) (of )?(operational|business|manual) (processes|workflows?)\b|\bworkflow automation\b/i,
+  /\b(operations|clinical|gtm|go[-\s]to[-\s]market|sales|support|care) (teams?|staff)\b|\bnon[-\s](technical|engineering) (stakeholders|teams?|teammates|users)\b/i,
+  /\b(customer|client)[-\s]facing (implementations?|deployments?|engineering|roles?|work)\b|\b(customer|client) (deployments?|implementations?|onboarding)\b|\bwork(ing)? directly with (customers|clients)\b/i,
+];
+
+/** Three distinct integration/internal-tools signals without an FDE title (two is borderline). */
+const FDE_THRESHOLD = 3;
 
 export const selectResume = async (params: {
   extracted: ExtractedJobData;

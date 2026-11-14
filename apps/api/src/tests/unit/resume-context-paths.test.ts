@@ -22,8 +22,8 @@ describe("resume context path lookup", () => {
     expect(paths[1].endsWith("ai_resume.pdf")).toBe(true);
   });
 
-  it("only BASE and AI are active resume types", () => {
-    expect([...RESUME_TYPES]).toEqual(["BASE", "AI"]);
+  it("BASE, AI, and FDE are the active resume types", () => {
+    expect([...RESUME_TYPES]).toEqual(["BASE", "AI", "FDE"]);
   });
 
   it("maps legacy stored resume types to BASE for scoring", () => {
@@ -38,14 +38,17 @@ describe("resume context path lookup", () => {
 const installed = RESUME_TYPES.every((t) => fs.existsSync(resolveResumeCandidatePaths(t)[0]!));
 
 describe.runIf(installed)("installed resumes", () => {
-  it("loads non-empty BASE and AI contexts from the new files", async () => {
+  it("loads non-empty BASE, AI, and FDE contexts from the new files", async () => {
     const contexts = await new ResumeContextService().getAvailableContexts();
-    expect(Object.keys(contexts).sort()).toEqual(["AI", "BASE"]);
+    expect(Object.keys(contexts).sort()).toEqual(["AI", "BASE", "FDE"]);
     expect(path.basename(contexts.BASE!.sourcePath)).toBe("base_resume.txt");
     expect(path.basename(contexts.AI!.sourcePath)).toBe("ai_resume.txt");
     expect(contexts.BASE!.rawText.length).toBeGreaterThan(1500);
     expect(contexts.AI!.rawText.length).toBeGreaterThan(1500);
     expect(contexts.AI!.rawText).toMatch(/LangGraph/);
+    expect(path.basename(contexts.FDE!.sourcePath)).toBe("fde_resume.txt");
+    expect(contexts.FDE!.rawText.length).toBeGreaterThan(1500);
+    expect(contexts.FDE!.rawText).toMatch(/Integrations/);
   });
 });
 

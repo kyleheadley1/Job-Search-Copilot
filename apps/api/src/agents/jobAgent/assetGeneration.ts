@@ -237,7 +237,17 @@ export const buildDeterministicGeneratedAssets = (
   ].join(" ");
 
   const talkingPoints: string[] = [];
-  if (recommendedResume === "AI") {
+  if (recommendedResume === "FDE") {
+    talkingPoints.push(
+      "I turn operational needs into working software: I built internal tools used by 10+ people and integrations across Gmail, OAuth, and job boards.",
+    );
+    talkingPoints.push(
+      "I build AI into practical workflows with guardrails: approval-gated agents, step limits, cost caps, and a scoped MCP server.",
+    );
+    talkingPoints.push(
+      "Nine years coordinating schools, vendors, and staff means I can scope work directly with non-technical teams and follow it through.",
+    );
+  } else if (recommendedResume === "AI") {
     talkingPoints.push(
       "I built and maintain a RAG codebase assistant, and I measure it: a 50-question golden set took citation validity from under 50% to 100%.",
     );
@@ -275,7 +285,9 @@ export const buildDeterministicGeneratedAssets = (
   const bulletLeads =
     recommendedResume === "AI"
       ? ["Built", "Implemented", "Benchmarked", "Designed", "Shipped"]
-      : ["Built", "Shipped", "Implemented", "Designed", "Collaborated on"];
+      : recommendedResume === "FDE"
+        ? ["Built", "Integrated", "Automated", "Delivered", "Partnered on"]
+        : ["Built", "Shipped", "Implemented", "Designed", "Collaborated on"];
   const baseBullets = (resumeEvidence.length ? resumeEvidence : guidance.selectedProjectSummaries).map((summary, idx) =>
     withLeadVerb(bulletLeads[idx % bulletLeads.length], summary),
   );
@@ -285,7 +297,12 @@ export const buildDeterministicGeneratedAssets = (
           "Built RAG retrieval with embeddings, vector search, and reranking that returns source-grounded, cited answers.",
           "Built an LLM evaluation harness that measures correctness, citation validity, latency, and cost against fixed baselines.",
         ]
-      : [
+      : recommendedResume === "FDE"
+        ? [
+            "Built integrations and internal tools that connect third-party systems to the workflows real teams rely on.",
+            "Scoped requests with non-technical stakeholders and shipped working first versions, then iterated on feedback.",
+          ]
+        : [
           "Built API-first product features and internal tooling with a backend-leaning full-stack approach.",
           "Collaborated with stakeholders to scope and ship pragmatic increments tied to product needs.",
         ];

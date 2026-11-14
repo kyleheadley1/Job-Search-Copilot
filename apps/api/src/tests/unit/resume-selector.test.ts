@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { selectResume } from "../../agents/jobAgent/resumeSelector.js";
+import { deterministicResumeSelection, selectResume } from "../../agents/jobAgent/resumeSelector.js";
+import type { ResumeContextSet } from "../../types/resumeContext.js";
 import { userProfile } from "../../config/userProfile.js";
 import type { ExtractedJobData } from "../../types/job.js";
 
@@ -29,7 +30,7 @@ const job = (over: Partial<ExtractedJobData>): ExtractedJobData => ({
   ...over,
 });
 
-describe("resume selection (BASE vs AI)", () => {
+describe("resume selection (BASE, AI, FDE)", () => {
   it("picks AI for applied AI engineering roles", async () => {
     const result = await pick(
       job({
@@ -96,6 +97,66 @@ describe("resume selection (BASE vs AI)", () => {
         requirements: ["Early career rotational program", "Java or JavaScript"],
       }),
     );
+    expect(result.recommendedResume).toBe("BASE");
+  });
+
+  it("picks FDE for forward-deployed titles, even when the title mentions AI", async () => {
+    const result = await pick(
+      job({
+        company: "Endex",
+        title: "Forward Deployed AI Engineer",
+        requiredSkills: ["LLMs", "agents"],
+        responsibilities: ["Deploy AI workflows with customers"],
+        rawText: "Forward Deployed AI Engineer. Work directly with customers to deploy LLM agents.",
+      }),
+    );
+    expect(result.recommendedResume).toBe("FDE");
+  });
+
+  it("picks FDE for application / solutions engineer titles", async () => {
+    const result = await pick(job({ title: "Associate Application Engineer - AI & Data" }));
+    expect(result.recommendedResume).toBe("FDE");
+  });
+
+  it("picks FDE for integration and internal-tools heavy roles without an FDE title", async () => {
+    const result = await pick(
+      job({
+        company: "Talkiatry",
+        title: "Software Engineer",
+        stack: ["TypeScript", "React", "Node.js", "AWS"],
+        rawText:
+          "Platform and Internal Tools team: services connecting third-party systems to product surfaces, internal tooling for providers, and systems that synchronize patient data across platforms.",
+      }),
+    );
+    expect(result.recommendedResume).toBe("FDE");
+  });
+
+  it("keeps AI for AI-core roles that also mention internal tools", async () => {
+    const result = await pick(
+      job({
+        title: "Applied AI Engineer",
+        requiredSkills: ["LLMs", "RAG", "evals"],
+        rawText: "Applied AI Engineer building RAG and LLM evals; some internal tools work.",
+      }),
+    );
+    expect(result.recommendedResume).toBe("AI");
+  });
+
+  it("keeps BASE when a product role mentions internal tools only in passing", async () => {
+    const result = await pick(
+      job({
+        title: "Software Engineer - Product",
+        rawText:
+          "Build customer-facing features with TypeScript, React, and REST APIs. Ship internal tools and AI-enabled workflows for operations teams.",
+      }),
+    );
+    expect(result.recommendedResume).toBe("BASE");
+  });
+
+  it("falls back to BASE when no FDE resume is installed", () => {
+    const ctx = (type: string) => ({ type, metadata: { keywords: [] } });
+    const withoutFde = { BASE: ctx("BASE"), AI: ctx("AI") } as unknown as ResumeContextSet;
+    const result = deterministicResumeSelection(job({ title: "Solutions Engineer" }), withoutFde);
     expect(result.recommendedResume).toBe("BASE");
   });
 });

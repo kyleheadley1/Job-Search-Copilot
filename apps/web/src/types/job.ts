@@ -1,4 +1,4 @@
-export type ResumeType = "BASE" | "AI" | "SWE" | "SIE" | "EARLY_CAREER";
+export type ResumeType = "BASE" | "AI" | "FDE" | "SWE" | "SIE" | "EARLY_CAREER";
 export type Recommendation = "strong_apply" | "apply" | "stretch" | "weak";
 
 export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {

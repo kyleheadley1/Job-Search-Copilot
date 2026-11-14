@@ -213,6 +213,7 @@ export function mapSpreadsheetStatusToJobStatus(text: string): JobStatus {
 /** Spreadsheet rows predate BASE/AI, so unlabeled rows keep their historical SWE label. */
 export function parseResumeColumn(text: string): StoredResumeType {
   const t = text.trim().toUpperCase();
+  if (/\bFDE\b/.test(t)) return 'FDE';
   if (/\bAI\b/.test(t)) return 'AI';
   if (t.includes('BASE')) return 'BASE';
   if (t.includes('SIE')) return 'SIE';
