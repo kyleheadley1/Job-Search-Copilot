@@ -157,6 +157,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(pick),
     }),
+  gmailSplitRoleLess: (key: string) =>
+    request<{ keys: string[]; evaluations: EvaluationSummary[] }>(
+      `/gmail/evaluations/${encodeURIComponent(key)}/split-role-less`,
+      { method: "POST" },
+    ),
   gmailRejectCandidate: (key: string, pick: { url?: string; prospectId?: string; note?: string }) =>
     request<{ evaluation: EvaluationSummary }>(`/gmail/evaluations/${encodeURIComponent(key)}/candidates/reject`, {
       method: "POST",

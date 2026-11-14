@@ -146,4 +146,29 @@ export const gmailMessagesRepository = {
       .toArray();
     return docs.map(({ _id, ...rest }) => ({ ...rest, id: rest.id ?? _id }));
   },
+
+  /** Assign a role onto a stored classification (used when confirmations omitted the title). */
+  async setClassificationRole(id: string, role: string): Promise<void> {
+    const col = await this.collection();
+    await col.updateOne(
+      { _id: id, "classification.isApplicationEmail": true },
+      { $set: { "classification.role": role.trim(), processedAt: new Date().toISOString() } },
+    );
+  },
+
+  /** Drop a stored message from application grouping (e.g. Greenhouse security-code mail). */
+  async setNotApplicationEmail(id: string, reason: string): Promise<void> {
+    const col = await this.collection();
+    await col.updateOne(
+      { _id: id },
+      {
+        $set: {
+          "classification.isApplicationEmail": false,
+          "classification.eventType": "other",
+          prefilterReason: reason,
+          processedAt: new Date().toISOString(),
+        },
+      },
+    );
+  },
 };

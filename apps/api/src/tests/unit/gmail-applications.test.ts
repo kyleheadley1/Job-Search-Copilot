@@ -63,6 +63,12 @@ describe("normalizeCompany / roleSimilarity", () => {
     expect(
       roleSimilarity("Software Engineer, Content Data Products", "Software Engineer - AI Platforms and Products (Frontend)"),
     ).toBe(0);
+    expect(
+      roleSimilarity(
+        "Applied AI Engineer: Solutions & Infrastructure",
+        "Applied AI Engineer: Product & Experience",
+      ),
+    ).toBe(0);
     expect(roleSimilarity("Front End Engineer", "Frontend Engineer")).toBeGreaterThanOrEqual(0.6);
     expect(roleSimilarity("Software Engineer", "Software Engineer, Publishing Technology")).toBeGreaterThanOrEqual(0.6);
   });

@@ -47,6 +47,10 @@ import {
   removeReviewedCandidate,
   restoreReviewedCandidate,
 } from "../services/gmail/jdRecovery/jdReview.service.js";
+import {
+  CannotSplitRoleLessError,
+  splitRoleLessByCandidates,
+} from "../services/gmail/jdRecovery/splitRoleLessApplication.js";
 import { createLiveJdRecoveryQueueService } from "../services/gmail/jdRecovery/jdRecoveryQueue.service.js";
 import {
   buildCostSummary,
@@ -312,6 +316,10 @@ const sendEvaluationError = (res: Response, error: unknown): boolean => {
     res.status(409).json({ error: "invalid_review_action", message: error.message });
     return true;
   }
+  if (error instanceof CannotSplitRoleLessError) {
+    res.status(409).json({ error: "cannot_split", message: error.message });
+    return true;
+  }
   if (error instanceof ScoreRevisionError) {
     const status =
       error.code === "NOT_FOUND" ? 404 : error.code === "METHOD_NOT_EXECUTABLE" ? 403 : 409;
@@ -497,6 +505,16 @@ gmailRouter.post("/evaluations/:key/confirm", async (req, res, next) => {
     const { url, prospectId } = ConfirmBodySchema.parse(req.body ?? {});
     const { evaluation } = await confirmReviewedCandidate(req.params.key, url ?? prospectId!);
     res.json({ evaluation: toEvaluationSummary(evaluation) });
+  } catch (error) {
+    if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+gmailRouter.post("/evaluations/:key/split-role-less", async (req, res, next) => {
+  try {
+    const { keys, evaluations } = await splitRoleLessByCandidates(req.params.key);
+    res.json({ keys, evaluations: evaluations.map((evaluation) => toEvaluationSummary(evaluation)) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;
     next(error);

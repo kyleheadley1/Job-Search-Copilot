@@ -136,6 +136,9 @@ const matchTokens = (role: string): Set<string> =>
 /**
  * Share of the shorter title's words found in the other. When both titles name a specialty
  * ("Content Data Products" vs "AI Platforms and Products"), they must share one of those words.
+ * If each title also has its own specialty words the other lacks ("Solutions & Infrastructure"
+ * vs "Product & Experience"), treat them as different openings even when they share a family
+ * prefix like "Applied AI Engineer".
  */
 export const roleSimilarity = (a: string, b: string): number => {
   const ta = matchTokens(a);
@@ -143,8 +146,12 @@ export const roleSimilarity = (a: string, b: string): number => {
   const loose = looseRoleSimilarity(a, b);
   if (loose === 0) return 0;
   const specificA = [...ta].filter((t) => !GENERIC_ROLE_TOKENS.has(t));
-  const specificB = new Set([...tb].filter((t) => !GENERIC_ROLE_TOKENS.has(t)));
-  if (specificA.length > 0 && specificB.size > 0 && !specificA.some((t) => specificB.has(t))) return 0;
+  const specificB = [...tb].filter((t) => !GENERIC_ROLE_TOKENS.has(t));
+  const specificBSet = new Set(specificB);
+  if (specificA.length > 0 && specificB.length > 0 && !specificA.some((t) => specificBSet.has(t))) return 0;
+  const onlyA = specificA.filter((t) => !specificBSet.has(t));
+  const onlyB = specificB.filter((t) => !new Set(specificA).has(t));
+  if (onlyA.length > 0 && onlyB.length > 0) return 0;
   return loose;
 };
 

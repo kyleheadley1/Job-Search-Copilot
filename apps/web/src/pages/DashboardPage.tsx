@@ -1041,15 +1041,24 @@ function JdMatchCell({
 function ReviewPanel({
   app,
   onScored,
+  onSplit,
 }: {
   app: GmailApplication;
   onScored: (evaluation: EvaluationSummary) => void;
+  onSplit?: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
-  const candidates = app.evaluation?.candidates ?? [];
+  const candidates = (app.evaluation?.candidates ?? []).filter(
+    (c) => c.reviewStatus !== "rejected" && c.reviewStatus !== "removed",
+  );
+  const canSplit =
+    !app.role &&
+    Boolean(onSplit) &&
+    candidates.length >= 2 &&
+    app.emails.filter((e) => e.eventType === "applied" && !/security code/i.test(e.subject)).length >= 2;
 
   const run = async (id: string, action: () => Promise<{ evaluation: EvaluationSummary }>) => {
     setBusy(id);
@@ -1068,10 +1077,40 @@ function ReviewPanel({
       <span className="muted smallText">
         The scorer only sees the JD text, never the email or outcome. Scoring takes about a minute.
       </span>
+      {canSplit && (
+        <div className="stack" style={{ gap: "0.35rem" }}>
+          <span className="muted smallText">
+            Role was missing from the confirmation emails, so multiple applies at {app.company} were merged.
+            Split them into one application per JD candidate before confirming.
+          </span>
+          <div>
+            <button
+              className="btn-secondary"
+              disabled={busy !== null}
+              onClick={() => {
+                void (async () => {
+                  setBusy("split");
+                  setError(null);
+                  try {
+                    await api.gmailSplitRoleLess(app.key);
+                    await onSplit?.();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(null);
+                  }
+                })();
+              }}
+            >
+              {busy === "split" ? "Splitting…" : `Split into ${candidates.length} applications`}
+            </button>
+          </div>
+        </div>
+      )}
       {candidates.length > 0 && (
         <div className="stack" style={{ gap: "0.4rem" }}>
           <strong>Is it one of these?</strong>
-          {candidates.filter((c) => c.reviewStatus !== "rejected" && c.reviewStatus !== "removed").map((c) => {
+          {candidates.map((c) => {
             const id = c.prospectId ?? c.url ?? c.title ?? "candidate";
             const label = c.title ?? c.url ?? "Saved prospect";
             const partial = c.completeness === "partial";
@@ -1830,7 +1869,14 @@ function DashboardView({ variant }: { variant: "live" | "demo" }) {
                             ) : app.evaluation.status === "scored" ? (
                               <TitlePanel app={app} onUpdated={(e) => onScored(app.key, e, true)} />
                             ) : (
-                              <ReviewPanel app={app} onScored={(e) => onScored(app.key, e)} />
+                              <ReviewPanel
+                                app={app}
+                                onScored={(e) => onScored(app.key, e)}
+                                onSplit={async () => {
+                                  setReviewKey(null);
+                                  await loadApplications();
+                                }}
+                              />
                             )}
                           </td>
                         </tr>

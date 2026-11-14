@@ -302,6 +302,11 @@ export const evaluationsRepository = {
     if (oldKey !== evaluation.key) await col.deleteOne({ _id: oldKey });
   },
 
+  async remove(key: string): Promise<void> {
+    const col = await this.collection();
+    await col.deleteOne({ _id: key });
+  },
+
   /** Outcome-only update; never touches the score. */
   async setDiagnostic(key: string, diagnostic: ScoringDiagnostic): Promise<void> {
     const col = await this.collection();
