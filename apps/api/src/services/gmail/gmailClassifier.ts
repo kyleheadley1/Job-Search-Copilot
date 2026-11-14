@@ -57,14 +57,14 @@ const ATS_SENDER_RE =
   /@(?:[\w-]+\.)*(greenhouse(?:-mail)?\.io|greenhouse\.com|lever\.co|hire\.lever\.co|ashbyhq\.com|myworkday(?:jobs)?\.com|workday\.com|smartrecruiters\.com|icims\.com|jobvite\.com|linkedin\.com|indeed\.com|indeedemail\.com|simplify\.jobs|workablemail\.com|workable\.com|bamboohr\.com|rippling\.com|breezy\.hr|recruitee\.com|teamtailor\.com|jazzhr\.com|applytojob\.com|successfactors\.com|taleo\.net|oraclecloud\.com|hackerrank\.com|codesignal\.com)\b/i;
 
 const APPLICATION_PHRASE_RE =
-  /\b(thank(?:s| you) for (?:your )?(?:applying|application|interest)|we(?:'ve| have) received your application|application (?:received|submitted|confirmation|update|status)|your application (?:to|for|with)|your application (?:was|has been) (?:sent|submitted)|application (?:was )?sent to|applied (?:on|via) (?:linkedin|indeed)|you applied (?:to|for)|move forward with (?:other|your)|not (?:to )?(?:move|moving) forward|decided to (?:pursue|proceed with) other|unfortunately,? (?:we|after)|schedule (?:an?|your) (?:interview|call|chat)|invite you to (?:an? )?(?:interview|chat|call|complete)|phone screen|technical (?:interview|screen|assessment)|coding (?:challenge|assessment|exercise)|take[- ]home|online assessment|hackerrank|codesignal|offer letter|pleased to (?:offer|extend)|next steps? in (?:the|our) (?:hiring|interview|recruiting) process|candidacy|(?:your )?interview with [^.\n]{1,40} (?:has been |is )?(?:confirmed|scheduled)|recruiter screen|initial screen)\b/i;
+  /\b(thank(?:s| you) for (?:your )?(?:applying|application|interest)|we(?:'ve| have) received your application|application (?:received|submitted|confirmation|update|status)|your application (?:to|for|with)|your application (?:was|has been) (?:sent|submitted)|application (?:was )?sent to|applied (?:on|via) (?:linkedin|indeed)|you applied (?:to|for)|move forward with (?:other|your)|not (?:to )?(?:move|moving) forward|decided to (?:pursue|proceed with) other|unfortunately,? (?:we|after)|(?:pause(?:d)?\s+(?:the\s+)?(?:hiring|recruiting|recruitment)|(?:hiring|recruiting|recruitment)\b[\s\S]{0,80}\b(?:paused|on hold|frozen|cancelled|canceled))|(?:role|position|requisition|search)s? (?:is |are |has been |have been )?(?:paused|on hold|frozen|cancelled|canceled|closed)|put[\s\S]{0,40}on hold|reach out .+ if (?:the |these )?(?:position|role)s? reopen|schedule (?:an?|your) (?:interview|call|chat)|invite you to (?:an? )?(?:interview|chat|call|complete)|phone screen|technical (?:interview|screen|assessment)|coding (?:challenge|assessment|exercise)|take[- ]home|online assessment|hackerrank|codesignal|offer letter|pleased to (?:offer|extend)|next steps? in (?:the|our) (?:hiring|interview|recruiting) process|candidacy|(?:your )?interview with [^.\n]{1,40} (?:has been |is )?(?:confirmed|scheduled)|recruiter screen|initial screen)\b/i;
 
 /** Alerts, digests, and marketing that mention jobs but are not about an application. */
 const NOT_APPLICATION_RE =
   /\b(jobs? (?:you may be|you might be) interested in|new jobs? (?:for you|matching|near)|job alert|jobs? recommended for you|recommended jobs|top job picks|is hiring\b|are hiring\b|similar jobs|job matches|weekly digest|daily digest|newsletter|webinar|unsubscribe from (?:job )?alerts|people (?:also )?viewed|who viewed your profile|connection request|endorse)\b/i;
 
 /** Bump when the prefilter keeps more mail, so previously dropped messages are re-checked. */
-export const PREFILTER_VERSION = 5;
+export const PREFILTER_VERSION = 7;
 
 /**
  * Google/Outlook calendar invites ("Invitation: Alex and Jane @ Mon …") carry no application phrases.
@@ -123,7 +123,7 @@ Return JSON only:
 
 eventType rules:
 - applied: application received / submitted confirmation
-- rejected: not moving forward, position filled, decided on other candidates
+- rejected: process ended without an offer — not moving forward, position filled, decided on other candidates, hiring paused / put on hold / frozen, role cancelled or closed, or "we'll reach out if it reopens". This includes polite pauses after a good interview; it is not limited to personal rejection
 - interview: invitation to schedule or confirmation of an interview / phone screen / recruiter call
 - assessment: coding challenge, take-home, online assessment, HackerRank / CodeSignal
 - offer: job offer

@@ -50,6 +50,18 @@ describe("prefilterEmail", () => {
     ).toBe(true);
   });
 
+  it("keeps hiring-paused updates even when the subject is only the company name", () => {
+    expect(
+      prefilterEmail(
+        email({
+          from: "Joseph Souhlakis <joseph.souhlakis@petfolk.com>",
+          subject: "Petfolk",
+          body: "Unfortunately, Petfolk leadership has decided to pause hiring for the two additional Strategy Lead positions we were recruiting for.",
+        }),
+      ),
+    ).toEqual({ keep: true, reason: "application_phrase" });
+  });
+
   it("keeps interview confirmations", () => {
     expect(
       prefilterEmail(

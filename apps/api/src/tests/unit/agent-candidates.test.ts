@@ -81,6 +81,20 @@ describe("gatherCandidates", () => {
     expect(kinds([app({ lastUpdateAt: daysAgo(9) })])).toEqual([]);
   });
 
+  it("does not suggest follow-ups when the tracker already closed or paused the role", () => {
+    const mid = {
+      status: "interviewing" as const,
+      furthestStage: "interviewing" as const,
+      interviewRounds: [round({ scheduledAt: daysAgo(12) })],
+      lastUpdateAt: daysAgo(9),
+      trackerJobId: "job-1",
+    };
+    expect(kinds([app({ ...mid, trackerStatus: "closed" })])).toEqual([]);
+    expect(kinds([app({ ...mid, trackerStatus: "lapsed" })])).toEqual([]);
+    expect(kinds([app({ ...mid, trackerStatus: "rejected" })])).toEqual([]);
+    expect(kinds([app({ ...mid, trackerStatus: "interviewing" })])).toEqual(["follow_up"]);
+  });
+
   it("flags a silent tracked application for auto-lapse, not a Next steps card", () => {
     expect(shouldAutoLapse(app({ lastUpdateAt: daysAgo(35), trackerJobId: "job-1", trackerStatus: "applied" }), NOW)).toBe(
       true,

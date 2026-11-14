@@ -40,6 +40,8 @@ export const FOLLOW_UP_AFTER_DAYS = 7;
 export const GHOSTED_AFTER_DAYS = 30;
 
 const OPEN_TRACKER: JobStatus[] = ["applied", "assessment", "interviewing"];
+/** Tracker already ended the process — no follow-ups, prep, or thank-yous. */
+const TERMINAL_TRACKER: JobStatus[] = ["rejected", "closed", "offer", "lapsed", "skip"];
 
 const roleText = (app: GmailApplication) => (app.role ? `${app.role} at ${app.company}` : app.company);
 const daysAgo = (iso: string, now: number) => Math.floor((now - Date.parse(iso)) / DAY_MS);
@@ -63,6 +65,7 @@ export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): Ag
   const out: AgentCandidate[] = [];
   for (const app of apps) {
     if (app.status === "rejected") continue;
+    if (app.trackerStatus && TERMINAL_TRACKER.includes(app.trackerStatus)) continue;
     const hasOffer = app.status === "offer";
     const base = { appKey: app.key, company: app.company, role: app.role, trackerJobId: app.trackerJobId };
     const silentDays = daysAgo(app.lastUpdateAt, now);
