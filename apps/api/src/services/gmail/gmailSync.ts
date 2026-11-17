@@ -9,6 +9,7 @@ import { ACTION_EVENT_TYPES, ACTION_REQUEST_VERSION, extractActionRequest } from
 import { ACTION_STALE_DAYS } from "./gmailApplications.js";
 import { gmailMessagesRepository } from "./gmailMessages.repository.js";
 import { extractInterviewDetail, INTERVIEW_DETAIL_VERSION } from "./interviewRounds.js";
+import { seedUrgentNextSteps } from "../agent/dailyAgent.js";
 import { addMissingApplicationsQuietly } from "./trackerAutoAdd.js";
 import { syncTrackerFromGmailQuietly } from "./trackerAutoLapse.js";
 
@@ -243,6 +244,11 @@ const processMessages = async (opts: {
       await markRepliedActions();
       result.trackerAdded = await addMissingApplicationsQuietly();
       await syncTrackerFromGmailQuietly();
+      await seedUrgentNextSteps().catch((error) => {
+        logger.warn("Urgent next-steps seed after sync failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   }
 

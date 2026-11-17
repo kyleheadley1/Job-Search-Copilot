@@ -90,6 +90,31 @@ const fromRules = (c: AgentCandidate, nowIso: string): AgentSuggestion => {
   return { ...rest, reason: facts, writtenBy: "rules", status: "open", createdAt: nowIso, updatedAt: nowIso };
 };
 
+/** Time-sensitive steps that should appear as soon as the situation is true, not only after the morning agent pass. */
+const URGENT_KINDS = new Set<AgentCandidate["kind"]>(["thank_you", "interview_prep", "action_reply"]);
+
+/**
+ * Seed thank-you / prep / respond cards from free rules when they are not already open or
+ * resolved. Drafts still come from the budgeted agent pass (Refresh or the morning run).
+ */
+export const seedUrgentNextSteps = async (
+  deps: AgentDeps = defaultDeps,
+  now = new Date(),
+): Promise<number> => {
+  if (!env.agentEnabled) return 0;
+  const nowIso = now.toISOString();
+  const urgent = gatherCandidates(await deps.loadApps(), now.getTime()).filter((c) => URGENT_KINDS.has(c.kind));
+  if (urgent.length === 0) return 0;
+  const existing = await deps.byIds(urgent.map((c) => c.id));
+  let seeded = 0;
+  for (const c of urgent) {
+    if (existing.has(c.id)) continue;
+    await deps.save(fromRules(c, nowIso));
+    seeded += 1;
+  }
+  return seeded;
+};
+
 export const buildAgentPrompt = (items: AgentCandidate[]): string =>
   [
     `Candidate: ${userProfile.headline}`,
@@ -241,6 +266,11 @@ export const dismissSuggestion = async (id: string, now = new Date()): Promise<v
 };
 
 export const getAgentPanel = async () => {
+  await seedUrgentNextSteps().catch((error) => {
+    logger.warn("Urgent next-steps seed failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
   const [suggestions, meta, budget, gmail] = await Promise.all([
     suggestionsRepository.listOpen(),
     suggestionsRepository.getMeta(),

@@ -241,7 +241,9 @@ export function NextStepsCard({
       )}
       {panel && panel.suggestions.length === 0 ? (
         <p className="muted smallText">
-          {last ? "Nothing needs you right now." : "The first check runs after the next morning Gmail sync, or press Refresh."}
+          {last
+            ? "Nothing needs you right now."
+            : "Thank-yous and prep appear once the interview time has passed. Press Refresh for drafted wording, or wait for the morning check."}
         </p>
       ) : (
         <table className="table">

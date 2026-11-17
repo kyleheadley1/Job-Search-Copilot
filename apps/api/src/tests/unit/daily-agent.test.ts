@@ -16,9 +16,8 @@ vi.mock("../../services/agent/suggestions.repository.js", () => ({
 }));
 vi.mock("../../services/jobs/jobs.repository.js", () => ({ jobsRepository: { updateStatus } }));
 
-const { runDailyAgent, approveSuggestion, dismissSuggestion, SuggestionNotFoundError } = await import(
-  "../../services/agent/dailyAgent.js"
-);
+const { runDailyAgent, seedUrgentNextSteps, approveSuggestion, dismissSuggestion, SuggestionNotFoundError } =
+  await import("../../services/agent/dailyAgent.js");
 type AgentDeps = Parameters<typeof runDailyAgent>[0];
 
 const NOW = new Date("2026-10-04T12:00:00.000Z");
@@ -81,6 +80,70 @@ const makeDeps = (over: Partial<AgentDeps> & { existing?: AgentSuggestion[]; all
   };
   return { deps, saved, expired };
 };
+
+const thankYouApp = (): GmailApplication => ({
+  ...ghostedApp("c"),
+  status: "interviewing",
+  furthestStage: "interviewing",
+  lastUpdateAt: daysAgo(1),
+  trackerJobId: undefined,
+  trackerStatus: undefined,
+  interviewRounds: [
+    {
+      number: 1,
+      kind: "recruiter_screen",
+      focus: null,
+      interviewers: "Yasten",
+      startedAt: daysAgo(1),
+      lastEmailAt: daysAgo(1),
+      emailIds: ["e1"],
+      scheduledAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+      durationMinutes: 35,
+      cancelled: false,
+      label: "Recruiter screen",
+    },
+  ],
+});
+
+describe("seedUrgentNextSteps", () => {
+  it("writes thank-you cards from rules when they are missing", async () => {
+    const held = makeDeps({ loadApps: async () => [thankYouApp()] });
+    const seeded = await seedUrgentNextSteps(held.deps, NOW);
+    expect(seeded).toBe(1);
+    expect(held.saved[0]).toMatchObject({
+      kind: "thank_you",
+      writtenBy: "rules",
+      status: "open",
+      draftable: true,
+    });
+    expect(held.saved[0]?.draft).toBeUndefined();
+  });
+
+  it("does not recreate a dismissed thank-you", async () => {
+    const held = makeDeps({
+      loadApps: async () => [thankYouApp()],
+      existing: [
+        {
+          id: "thank_you:c:1",
+          kind: "thank_you",
+          appKey: "c",
+          company: "Acme",
+          role: null,
+          title: "t",
+          reason: "r",
+          priority: 3,
+          draftable: true,
+          writtenBy: "rules",
+          status: "dismissed",
+          createdAt: daysAgo(1),
+          updatedAt: daysAgo(1),
+        },
+      ],
+    });
+    expect(await seedUrgentNextSteps(held.deps, NOW)).toBe(0);
+    expect(held.saved).toEqual([]);
+  });
+});
 
 describe("runDailyAgent", () => {
   it("has the agent rank and draft new steps, keeping drafts only where a draft makes sense", async () => {
