@@ -9,7 +9,21 @@ import { insightsRepository } from "../services/insights/insights.repository.js"
 import { resumeContextService } from "../services/resume/resumeContext.js";
 import { proposeClaudeScoringCorrection } from "../services/scoring/claudeScoringProposal.js";
 import { loadApprovedOverlays } from "../services/scoring/scoreRevisions.service.js";
-import { MCP_MAX_DAYS, type McpDeps } from "./catalog.js";
+import {
+  createLiveProspectApplicationDeps,
+  listUnconfirmedProspects,
+  markProspectApplied,
+  ProspectApplicationError,
+} from "../services/gmail/jdRecovery/prospectApplication.service.js";
+import { MCP_MAX_DAYS, McpToolError, type McpDeps } from "./catalog.js";
+
+const asToolError = (error: unknown): never => {
+  if (error instanceof ProspectApplicationError) {
+    const options = error.options?.length ? ` Options: ${JSON.stringify(error.options)}` : "";
+    throw new McpToolError(error.code, `${error.message}${options}`);
+  }
+  throw error;
+};
 
 /** Production wiring: the same local Mongo collections the API already reads. */
 export const createLiveDeps = (): McpDeps => {
@@ -25,6 +39,10 @@ export const createLiveDeps = (): McpDeps => {
     getUserProfile: () => userProfile,
     getResumeContexts: () => resumeContextService.getAvailableContexts(),
     saveJobProspect,
+    markProspectApplied: (input) =>
+      markProspectApplied(input, createLiveProspectApplicationDeps()).catch(asToolError),
+    listUnconfirmedProspects: (input) =>
+      listUnconfirmedProspects(input, createLiveProspectApplicationDeps()).catch(asToolError),
     submitJdCandidate: (input) =>
       submitJdCandidate(input, {
         getApplications: getGmailApplications,

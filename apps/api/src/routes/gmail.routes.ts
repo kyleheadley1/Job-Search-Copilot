@@ -62,6 +62,12 @@ import { monthStartDay } from "../services/llm/featureBudget.js";
 import { llmUsageRepository, localDay } from "../services/llm/llmUsage.js";
 import { jobProspectsRepository } from "../services/gmail/jdRecovery/jobProspects.repository.js";
 import { withProspectLinks } from "../services/gmail/jdRecovery/prospectMatch.js";
+import {
+  createLiveProspectApplicationDeps,
+  listUnconfirmedProspects,
+  markProspectApplied,
+  ProspectApplicationError,
+} from "../services/gmail/jdRecovery/prospectApplication.service.js";
 import { buildRubricSummary, toEvaluationSummary, withEvaluations } from "../services/gmail/jdRecovery/summary.js";
 import {
   approveScoreRevision,
@@ -604,6 +610,46 @@ gmailRouter.post("/evaluations/:key/title", async (req, res, next) => {
     res.json({ evaluation: toEvaluationSummary(evaluation) });
   } catch (error) {
     if (sendEvaluationError(res, error)) return;
+    next(error);
+  }
+});
+
+const UnconfirmedQuerySchema = z.object({
+  minAgeDays: z.coerce.number().int().min(0).max(60).optional(),
+  includeApplied: z
+    .enum(["0", "1", "true", "false"])
+    .optional()
+    .transform((v) => (v == null ? undefined : v === "1" || v === "true")),
+});
+
+gmailRouter.get("/prospects/unconfirmed", async (req, res, next) => {
+  try {
+    const query = UnconfirmedQuerySchema.parse(req.query ?? {});
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await listUnconfirmedProspects(query, createLiveProspectApplicationDeps()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+const ProspectAppliedBodySchema = z
+  .object({
+    applied: z.boolean().default(true),
+    appliedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .strict();
+
+gmailRouter.post("/prospects/:id/applied", async (req, res, next) => {
+  try {
+    const body = ProspectAppliedBodySchema.parse(req.body ?? {});
+    res.json(
+      await markProspectApplied({ prospectId: req.params.id, ...body }, createLiveProspectApplicationDeps()),
+    );
+  } catch (error) {
+    if (error instanceof ProspectApplicationError) {
+      res.status(error.code === "PROSPECT_NOT_FOUND" ? 404 : 400).json({ error: error.code, message: error.message });
+      return;
+    }
     next(error);
   }
 });

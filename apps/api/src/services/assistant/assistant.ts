@@ -172,7 +172,7 @@ const openProposal = async (id: string, kind?: AssistantProposal["payload"]["kin
 export const proposalReplyTarget = async (id: string): Promise<ReplyTarget> => {
   const p = await openProposal(id, "email_draft");
   if (p.payload.kind !== "email_draft") throw new ProposalNotFoundError(id);
-  return replyTargetFor(p.payload.appKey, p.payload.preferEmailId);
+  return replyTargetFor(p.payload.appKey, p.payload.preferEmailId, { kind: p.payload.kind });
 };
 
 /**
@@ -181,7 +181,7 @@ export const proposalReplyTarget = async (id: string): Promise<ReplyTarget> => {
  */
 export const approveProposal = async (
   id: string,
-  email?: { to: string; body: string },
+  email?: { to: string; body: string; subject?: string },
   now = new Date(),
 ): Promise<AssistantProposal> => {
   const p = await openProposal(id);
@@ -198,6 +198,7 @@ export const approveProposal = async (
       preferEmailId: payload.preferEmailId,
       to: email.to,
       body: email.body,
+      subject: email.subject,
       source: "assistant",
       sourceId: p.id,
       kind: payload.emailKind,

@@ -234,10 +234,10 @@ export const api = {
     }),
   agentReplyTarget: (id: string) =>
     request<ReplyTarget>(`/agent/suggestions/${encodeURIComponent(id)}/reply-target`, { cache: "no-store" }),
-  agentCreateDraft: (id: string, to: string, body: string) =>
+  agentCreateDraft: (id: string, to: string, subject: string, body: string) =>
     request<DraftCreated>(`/agent/suggestions/${encodeURIComponent(id)}/draft`, {
       method: "POST",
-      body: JSON.stringify({ to, body }),
+      body: JSON.stringify({ to, subject, body }),
     }),
   agentDismiss: (id: string) =>
     request<void>(`/agent/suggestions/${encodeURIComponent(id)}/dismiss`, { method: "POST" }),
@@ -253,7 +253,7 @@ export const api = {
     request<AssistantReply>("/assistant/message", { method: "POST", body: JSON.stringify({ text }) }),
   assistantReplyTarget: (id: string) =>
     request<ReplyTarget>(`/assistant/proposals/${encodeURIComponent(id)}/reply-target`, { cache: "no-store" }),
-  assistantApprove: (id: string, email?: { to: string; body: string }) =>
+  assistantApprove: (id: string, email?: { to: string; subject?: string; body: string }) =>
     request<{ proposal: AssistantProposal; draftsUrl?: string }>(
       `/assistant/proposals/${encodeURIComponent(id)}/approve`,
       { method: "POST", body: JSON.stringify(email ? { email } : {}) },

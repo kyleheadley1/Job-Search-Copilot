@@ -18,9 +18,23 @@ export type JobProspect = {
   cleanedTextHash: string;
   status: JobProspectStatus;
   attachedKey?: string;
+  /** User-asserted application date (YYYY-MM-DD), recorded when no confirmation email is needed to know. */
+  appliedAt?: string;
+  /** User said they did not apply (or will not); excluded from the unconfirmed list. */
+  notApplied?: boolean;
+  /** Tracker row created for a user-marked application that had no Gmail confirmation. */
+  trackerJobId?: string;
+  /** True when trackerJobId was created by marking applied (so "not applied" may remove it). */
+  trackerCreatedByMark?: boolean;
+  /** Last failure creating that tracker row, cleared on success. */
+  trackerSyncError?: string;
   createdAt: string;
   updatedAt: string;
 };
+
+export type ProspectApplicationPatch = Partial<
+  Pick<JobProspect, "appliedAt" | "notApplied" | "trackerJobId" | "trackerCreatedByMark" | "trackerSyncError">
+>;
 
 type Doc = Omit<JobProspect, "id"> & { _id: string };
 
@@ -76,6 +90,26 @@ export const jobProspectsRepository = {
     const col = await this.collection();
     const docs = await col.find({ companyKey, status: "open" }).sort({ createdAt: -1 }).toArray();
     return docs.map(strip);
+  },
+
+  async findAll(): Promise<JobProspect[]> {
+    const col = await this.collection();
+    const docs = await col.find({}).sort({ createdAt: -1 }).toArray();
+    return docs.map(strip);
+  },
+
+  /** Set or clear the user's application state. `undefined` values are unset. */
+  async updateApplicationState(id: string, patch: ProspectApplicationPatch): Promise<JobProspect | null> {
+    const col = await this.collection();
+    const $set: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const $unset: Record<string, ""> = {};
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined) $unset[field] = "";
+      else $set[field] = value;
+    }
+    const update = Object.keys($unset).length > 0 ? { $set, $unset } : { $set };
+    const doc = await col.findOneAndUpdate({ _id: id }, update, { returnDocument: "after" });
+    return doc ? strip(doc) : null;
   },
 
   /** Attach only if still open, or already attached to this same application. */

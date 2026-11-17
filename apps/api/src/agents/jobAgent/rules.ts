@@ -63,6 +63,7 @@ import {
   jdHasDegreeEquivalencyClause,
   jdIsDegreePositive,
   jdHasStrictFieldDegreeLine,
+  jdIsHighSchoolOrGedOnly,
   resolveDegreeEquivalencyRules,
 } from '../../lib/degreeEquivalency.js';
 import { jdProhibitsGenAI } from '../../lib/genAiRestriction.js';
@@ -211,8 +212,10 @@ export const evaluateRules = (
     !profileHasCsDegreeCred(profile) &&
     credentialHardSignalCount >= 2;
 
+  const hsOrGedOnly = jdIsHighSchoolOrGedOnly(job.degreeRequirement?.raw ?? '');
+  // "High school diploma or GED required" is not a bachelor's screen — don't treat level:required alone as one.
   const degreeRequiredSignal =
-    degreeLevel === 'required' ||
+    (!hsOrGedOnly && degreeLevel === 'required') ||
     degreeRaw.includes('bachelor') ||
     degreeRaw.includes('bs in computer science') ||
     RAW_DEGREE.test(job.rawText ?? '');

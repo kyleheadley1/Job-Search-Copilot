@@ -177,6 +177,29 @@ describe("degree dock tiers", () => {
     expect(resolveDegreeGapTier(rules, userProfile)).toBe("high");
     expect(computeDegreeGapDock(rules, userProfile)).toBe(DEGREE_DOCK_BY_TIER.high);
   });
+
+  it("high-school / GED-only requirement does not fire the bachelor's structured-employer dock", () => {
+    const job: ExtractedJobData = {
+      ...NO_DEGREE_JOB,
+      company: "PaceMate",
+      title: "Associate Application Engineer – AI & Data",
+      degreeRequirement: { level: "required", raw: "High school diploma or GED required" },
+      requirements: [
+        "High school diploma or GED required",
+        "1–3 years of experience in software development, automation, data, or a similar technical role (internships, bootcamps, and hands-on project experience count!)",
+      ],
+      rawText: [
+        "High school diploma or GED required",
+        "1–3 years of experience in software development, automation, data, or a similar technical role (internships, bootcamps, and hands-on project experience count!)",
+        "Familiarity with TypeScript, Vue, Python, JavaScript, MySQL, or PostgreSQL",
+      ].join("\n"),
+    };
+    const rules = evaluateRules(job, userProfile, { activeResumeType: "FDE" });
+    expect(rules.explicitDegreeRisk).toBe(false);
+    expect(rules.degreeEquivalencySatisfied).toBe(true);
+    expect(resolveDegreeGapTier(rules, userProfile)).toBe("none");
+    expect(computeDegreeGapDock(rules, userProfile)).toBe(0);
+  });
 });
 
 describe("IBM degree gate consistency", () => {

@@ -96,6 +96,21 @@ export const profileHasAssociateDegree = (profile: UserProfile): boolean => {
   );
 };
 
+/**
+ * True when the only credential gate is high school / GED — not a bachelor's (or higher) screen.
+ * Those should not fire the structured-employer bachelor's gap dock.
+ */
+export const jdIsHighSchoolOrGedOnly = (degreeRaw: string): boolean => {
+  const d = normalizeMatcherText(degreeRaw);
+  if (!/\b(high school|ged|general educational development|general education development|secondary school)\b/.test(d)) {
+    return false;
+  }
+  if (/\b(bachelor|master|phd|ph\.?d|doctorate|undergraduate|b\.?\s*s\.?|m\.?\s*s\.?|associate)\b/.test(d)) {
+    return false;
+  }
+  return true;
+};
+
 export const profileHasBootcampCert = (profile: UserProfile): boolean => {
   const blob = profileCredentialBlob(profile);
   if (/\b(bootcamp|immersive|certificate|certification program|software development certificate)\b/i.test(blob)) {
@@ -255,6 +270,19 @@ export const resolveDegreeEquivalencyRules = (
   RuleEvaluation,
   "degreeHasEquivalencyClause" | "degreeEquivalencySatisfied" | "explicitDegreeRisk"
 > => {
+  // HS/GED-only gates are met by any candidate with post-secondary training (AA, bootcamp, etc.).
+  if (jdIsHighSchoolOrGedOnly(degreeRaw)) {
+    const met =
+      profile.degreeStatus.hasBachelors ||
+      profileHasAssociateDegree(profile) ||
+      profileHasBootcampCert(profile);
+    return {
+      degreeHasEquivalencyClause: true,
+      degreeEquivalencySatisfied: met,
+      explicitDegreeRisk: degreeRequiredSignal && !met,
+    };
+  }
+
   const degreeHasEquivalencyClause = jdHasDegreeEquivalencyClause(combinedText, degreeLevel, degreeRaw);
   const degreeEquivalencySatisfied = candidateSatisfiesDegreeEquivalency(
     profile,

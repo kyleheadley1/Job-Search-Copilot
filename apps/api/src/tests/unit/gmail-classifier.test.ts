@@ -50,6 +50,28 @@ describe("prefilterEmail", () => {
     ).toBe(true);
   });
 
+  it("keeps Gem rejection updates that name the role after a role-less apply", () => {
+    expect(
+      prefilterEmail(
+        email({
+          from: "Charlie Health Recruiting <no-reply@appreview.gem.com>",
+          subject: "Update on your Charlie Health application",
+          snippet:
+            "We appreciate your interest in Charlie Health and the time that you invested in applying for the Software Engineer, Full Stack (Provider) position. We ended up moving forward with other",
+        }),
+      ),
+    ).toEqual({ keep: true, reason: "ats_sender" });
+    expect(
+      prefilterEmail(
+        email({
+          from: "recruiting@charliehealth.com",
+          subject: "Update on your Charlie Health application",
+          snippet: "We ended up moving forward with other candidates for the Software Engineer role.",
+        }),
+      ),
+    ).toEqual({ keep: true, reason: "application_phrase" });
+  });
+
   it("keeps hiring-paused updates even when the subject is only the company name", () => {
     expect(
       prefilterEmail(

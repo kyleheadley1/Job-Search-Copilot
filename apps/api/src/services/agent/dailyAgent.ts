@@ -10,6 +10,7 @@ import { loadFeatureBudget, type FeatureBudget } from "../llm/featureBudget.js";
 import { localDay, withLlmContext } from "../llm/llmUsage.js";
 import { responsesClient, type StructuredCallResult } from "../llm/responsesClient.js";
 import { gatherCandidates, type AgentCandidate } from "./candidates.js";
+import { freshenRelativeCopy } from "./freshenRelativeCopy.js";
 import { syncTrackerFromGmailQuietly } from "../gmail/trackerAutoLapse.js";
 import {
   suggestionsRepository,
@@ -42,8 +43,8 @@ const SYSTEM_PROMPT = `You are a job-search assistant reviewing a candidate's op
 
 For every item return:
 - priority 1-5 (5 = do today: deadlines, interviews within a day; 1 = housekeeping)
-- reason: one sentence, <=25 words, why it matters now and what exactly to do. Never say how long until something ("in 41 hours", "tomorrow", "in 3 days"): the app shows the date and a live countdown next to it.
-- draft: only when the item says draftable=yes. A short, warm, specific email (<=110 words) the candidate can send as-is: no subject line, no placeholders like [Name] except the recipient greeting "Hi there," when no name is known, signed "Best,". Never invent facts, names, or dates beyond those given.
+- reason: one sentence, <=25 words, why it matters now and what exactly to do. Never say how long until something ("in 41 hours", "tomorrow", "in 3 days"): the app shows the date and a live countdown next to it. For thank-yous, match the held timing in facts ("0d ago" → today, "1d ago" → yesterday); do not assume the conversation was today.
+- draft: only when the item says draftable=yes. A short, warm, specific email (<=110 words) the candidate can send as-is: no subject line, no placeholders like [Name] except the recipient greeting "Hi there," when no name is known, signed "Best,". Never invent facts, names, or dates beyond those given. For thank-yous, refer to the conversation with today/yesterday from the held timing in facts ("0d ago" → today, "1d ago" → yesterday), not the clock time of this rewrite.
 
 Return JSON only: {"items":[{"i":<number>,"priority":<1-5>,"reason":"...","draft":"..." | null}]}`;
 
@@ -236,13 +237,13 @@ const openDraftable = async (id: string): Promise<AgentSuggestion> => {
 /** Who the draft would go to and in which thread, for the editor shown before you approve. */
 export const suggestionReplyTarget = async (id: string): Promise<ReplyTarget> => {
   const s = await openDraftable(id);
-  return replyTargetFor(s.appKey, s.replyEmailId);
+  return replyTargetFor(s.appKey, s.replyEmailId, { kind: s.kind });
 };
 
 /** Approve = create a Gmail draft with the recipient and text you confirmed; the step is then done. */
 export const draftSuggestion = async (
   id: string,
-  approved: { to: string; body: string },
+  approved: { to: string; body: string; subject: string },
   now = new Date(),
 ): Promise<OutboxEntry> => {
   const s = await openDraftable(id);
@@ -251,6 +252,7 @@ export const draftSuggestion = async (
     preferEmailId: s.replyEmailId,
     to: approved.to,
     body: approved.body,
+    subject: approved.subject,
     source: "next_steps",
     sourceId: s.id,
     kind: s.kind,
@@ -265,12 +267,46 @@ export const dismissSuggestion = async (id: string, now = new Date()): Promise<v
   await suggestionsRepository.resolve(id, "dismissed", now.toISOString());
 };
 
+const freshenSuggestions = (
+  suggestions: AgentSuggestion[],
+  live: AgentCandidate[],
+  now = new Date(),
+): AgentSuggestion[] => {
+  if (suggestions.length === 0) return suggestions;
+  const eventAtById = new Map(live.filter((c) => c.eventAt).map((c) => [c.id, c.eventAt!]));
+  return suggestions.map((s) => {
+    const eventAt = s.eventAt ?? eventAtById.get(s.id);
+    if (!eventAt) return s;
+    return {
+      ...s,
+      eventAt,
+      reason: freshenRelativeCopy(s.reason, eventAt, now),
+      ...(s.draft ? { draft: freshenRelativeCopy(s.draft, eventAt, now) } : {}),
+    };
+  });
+};
+
 export const getAgentPanel = async () => {
-  await seedUrgentNextSteps().catch((error) => {
+  const now = new Date();
+  let live: AgentCandidate[] = [];
+  try {
+    if (env.agentEnabled) {
+      live = gatherCandidates(await defaultDeps.loadApps(), now.getTime());
+      const urgent = live.filter((c) => URGENT_KINDS.has(c.kind));
+      if (urgent.length > 0) {
+        const existing = await defaultDeps.byIds(urgent.map((c) => c.id));
+        const nowIso = now.toISOString();
+        for (const c of urgent) {
+          if (existing.has(c.id)) continue;
+          await defaultDeps.save(fromRules(c, nowIso));
+        }
+      }
+    }
+  } catch (error) {
     logger.warn("Urgent next-steps seed failed", {
       message: error instanceof Error ? error.message : String(error),
     });
-  });
+  }
   const [suggestions, meta, budget, gmail] = await Promise.all([
     suggestionsRepository.listOpen(),
     suggestionsRepository.getMeta(),
@@ -280,7 +316,7 @@ export const getAgentPanel = async () => {
   return {
     enabled: env.agentEnabled,
     canCreateDrafts: gmail.canCreateDrafts,
-    suggestions,
+    suggestions: freshenSuggestions(suggestions, live, now),
     lastRun: meta.lastRun ?? null,
     budget: { monthlyUsd: budget.monthlyUsd, spentThisMonthUsd: budget.spentThisMonthUsd },
   };

@@ -73,8 +73,8 @@ function ProposalCard({
         <DraftEditor
           initialBody={p.body}
           loadTarget={loadTarget}
-          create={async (to, body) => {
-            const res = await api.assistantApprove(proposal.id, { to, body });
+          create={async (to, subject, body) => {
+            const res = await api.assistantApprove(proposal.id, { to, subject, body });
             setDraftsUrl(res.draftsUrl ?? null);
             onChange(res.proposal, res.draftsUrl);
             return { draftId: "", threadId: "", to, draftsUrl: res.draftsUrl ?? "" };

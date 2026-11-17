@@ -220,6 +220,29 @@ describe("buildApplications", () => {
     expect(apps[0]!.status).toBe("rejected");
   });
 
+  it("fills a role-less application from a later same-company email that names the role", () => {
+    const apps = buildApplications(
+      [
+        msg("Charlie Health", null, "applied", "2026-11-13T02:18:03.000Z"),
+        msg(
+          "Charlie Health",
+          "Software Engineer, Full Stack (Provider)",
+          "rejected",
+          "2026-11-17T14:21:47.000Z",
+        ),
+      ],
+      [],
+    );
+    expect(apps).toHaveLength(1);
+    expect(apps[0]).toMatchObject({
+      company: "Charlie Health",
+      role: "Software Engineer, Full Stack (Provider)",
+      status: "rejected",
+      key: "charlie health::software engineer full stack provider",
+    });
+    expect(apps[0]!.emails).toHaveLength(2);
+  });
+
   it("remembers an interview that ended in rejection and flags an estimated applied date", () => {
     const apps = buildApplications(
       [

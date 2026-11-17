@@ -5,6 +5,7 @@ import {
   buildPlatformSearchQuery,
   buildSearchQuery,
   classifyEmailWithLlm, PREFILTER_VERSION, prefilterEmail } from "./gmailClassifier.js";
+import { platformAccountId } from "./companyIdentity.js";
 import { ACTION_EVENT_TYPES, ACTION_REQUEST_VERSION, extractActionRequest } from "./actionRequest.js";
 import { ACTION_STALE_DAYS } from "./gmailApplications.js";
 import { gmailMessagesRepository } from "./gmailMessages.repository.js";
@@ -198,12 +199,14 @@ const processMessages = async (opts: {
     }
     handled += 1;
     const prefilter = prefilterEmail(email);
+    const platformAccount = platformAccountId(email.from, email.links) ?? undefined;
     const base = {
       id: email.id,
       threadId: email.threadId,
       date: email.date,
       from: email.from,
       subject: email.subject,
+      ...(platformAccount ? { platformAccount } : {}),
       prefilterPassed: prefilter.keep,
       prefilterReason: prefilter.reason,
       prefilterVersion: PREFILTER_VERSION,

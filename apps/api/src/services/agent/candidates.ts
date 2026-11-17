@@ -1,5 +1,6 @@
 import type { JobStatus } from "../../types/job.js";
 import type { GmailApplication } from "../gmail/gmailApplications.js";
+import { isCalendarInviteSubject, isUnreplyable } from "../gmail/replyDraft.js";
 
 export const AGENT_KINDS = ["action_reply", "interview_prep", "thank_you", "follow_up", "mark_ghosted"] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
@@ -25,6 +26,8 @@ export type AgentCandidate = {
   draftable: boolean;
   /** Email whose thread a reply draft should go into (the request, or the interview's last email). */
   replyEmailId?: string;
+  /** When the underlying event happened (interview time, request received); used to freshen "today"/"yesterday" in drafts. */
+  eventAt?: string;
   /** A tracker change that only happens when you approve it. */
   proposedChange?: { jobId: string; status: JobStatus };
 };
@@ -112,6 +115,11 @@ export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): Ag
           now - Date.parse(r.scheduledAt) <= THANK_YOU_WINDOW_DAYS * DAY_MS,
       );
     if (justHeld && !hasOffer) {
+      const replyEmailId = [...justHeld.emailIds]
+        .reverse()
+        .map((id) => app.emails.find((email) => email.id === id))
+        .find((email) => email && !isUnreplyable(email.from) && !isCalendarInviteSubject(email.subject))
+        ?.id;
       out.push({
         ...base,
         id: `thank_you:${app.key}:${justHeld.number}`,
@@ -120,7 +128,8 @@ export const gatherCandidates = (apps: GmailApplication[], now = Date.now()): Ag
         facts: `${justHeld.label} held ${daysAgo(justHeld.scheduledAt!, now)}d ago${justHeld.interviewers ? ` with ${justHeld.interviewers}` : ""}${justHeld.focus ? `, focus: ${justHeld.focus}` : ""}`,
         priority: 3,
         draftable: true,
-        ...(justHeld.emailIds.length ? { replyEmailId: justHeld.emailIds[justHeld.emailIds.length - 1] } : {}),
+        eventAt: justHeld.scheduledAt!,
+        ...(replyEmailId ? { replyEmailId } : {}),
       });
     }
 

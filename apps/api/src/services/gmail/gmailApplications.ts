@@ -1,10 +1,15 @@
 import { appliedAtIso } from "../../lib/trackerAutoArchive.js";
 import type { JobRecord, JobStatus } from "../../types/job.js";
 import { jobsRepository } from "../jobs/jobs.repository.js";
+import type { ActionType } from "./actionRequest.js";
+import {
+  displayCompanyName,
+  platformAccountId,
+  resolveCompanyKey,
+} from "./companyIdentity.js";
 import { isAtsSender, isFreemailSender, type EmailEventType } from "./gmailClassifier.js";
 import { gmailMessagesRepository, type StoredGmailMessage } from "./gmailMessages.repository.js";
 import { buildInterviewRounds, type InterviewRound } from "./interviewRounds.js";
-import type { ActionType } from "./actionRequest.js";
 
 export type ApplicationStatus = "applied" | "assessment" | "interviewing" | "rejected" | "offer";
 
@@ -84,17 +89,8 @@ const EVENT_WEIGHT: Record<EmailEventType, number> = {
   offer: 5,
 };
 
-const COMPANY_SUFFIX_RE =
-  /\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|plc|gmbh|technologies|technology|labs|group|holdings|hq)\b\.?/g;
-
-export const normalizeCompany = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/\(.*?\)/g, " ")
-    .replace(COMPANY_SUFFIX_RE, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+/** Normalized company key; known aliases collapse (Evolent → evolent health). */
+export const normalizeCompany = (name: string): string => resolveCompanyKey(name);
 
 const ROLE_STOPWORDS = new Set([
   "a", "an", "and", "the", "of", "for", "to", "in", "at", "with", "on", "i", "ii", "iii", "1", "2", "3",
@@ -282,16 +278,22 @@ const groupMessages = (messages: StoredGmailMessage[]): Group[] => {
     }
   }
 
+  mergeEquivalentCompanies(byCompany);
   mergeRoleLessVariants(byCompany);
   mergeRoleLessBySenderDomain(byCompany);
 
   const groups: Group[] = [];
   for (const [companyKey, bucket] of byCompany) {
+    const company = displayCompanyName(companyKey, bucket.company);
     if (bucket.unroled.length > 0) {
       if (bucket.roled.length === 1) bucket.roled[0]!.messages.push(...bucket.unroled);
-      else groups.push({ companyKey, company: bucket.company, role: null, messages: bucket.unroled });
+      else groups.push({ companyKey, company, role: null, messages: bucket.unroled });
     }
-    groups.push(...bucket.roled);
+    for (const g of bucket.roled) {
+      g.companyKey = companyKey;
+      g.company = company;
+      groups.push(g);
+    }
   }
   return groups;
 };
@@ -427,9 +429,69 @@ const trackerCompany = (job: JobRecord): string =>
 /** Same company when the shorter normalized name leads the longer one word for word ("pave" ~ "pave finance"). */
 export const sameCompany = (a: string, b: string): boolean => {
   if (!a || !b) return false;
-  if (a === b) return true;
-  const [short, long] = a.length <= b.length ? [a.split(" "), b.split(" ")] : [b.split(" "), a.split(" ")];
+  const ca = normalizeCompany(a);
+  const cb = normalizeCompany(b);
+  if (!ca || !cb) return false;
+  if (ca === cb) return true;
+  const [short, long] = ca.length <= cb.length ? [ca.split(" "), cb.split(" ")] : [cb.split(" "), ca.split(" ")];
   return short.every((token, i) => long[i] === token);
+};
+
+const bucketMessages = (bucket: CompanyBucket): StoredGmailMessage[] => [
+  ...bucket.unroled,
+  ...bucket.roled.flatMap((g) => g.messages),
+];
+
+const mergeBucketInto = (target: CompanyBucket, source: CompanyBucket) => {
+  target.unroled.push(...source.unroled);
+  for (const g of source.roled) {
+    const existing = target.roled.find(
+      (row) => row.role && g.role && roleSimilarity(row.role, g.role) >= ROLE_MATCH_THRESHOLD,
+    );
+    if (existing) existing.messages.push(...g.messages);
+    else target.roled.push(g);
+  }
+};
+
+const pickCompanyKey = (a: string, b: string): string => (a.length >= b.length ? a : b);
+
+const bucketPlatformAccounts = (bucket: CompanyBucket): Set<string> => {
+  const ids = new Set<string>();
+  for (const m of bucketMessages(bucket)) {
+    const id = m.platformAccount ?? platformAccountId(m.from);
+    if (id) ids.add(id);
+  }
+  return ids;
+};
+
+/**
+ * Fold buckets that are the same employer via word-prefix names or the same hiring-platform
+ * account (e.g. Evolent + Evolent Health both from evolent@myworkday.com).
+ */
+const mergeEquivalentCompanies = (byCompany: Map<string, CompanyBucket>) => {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const keys = [...byCompany.keys()];
+    for (let i = 0; i < keys.length; i += 1) {
+      for (let j = i + 1; j < keys.length; j += 1) {
+        const a = keys[i]!;
+        const b = keys[j]!;
+        if (!byCompany.has(a) || !byCompany.has(b)) continue;
+        const accountsA = bucketPlatformAccounts(byCompany.get(a)!);
+        const accountsB = bucketPlatformAccounts(byCompany.get(b)!);
+        const sharedAccount = [...accountsA].some((id) => accountsB.has(id));
+        if (!sharedAccount && !sameCompany(a, b)) continue;
+        const keep = pickCompanyKey(a, b);
+        const drop = keep === a ? b : a;
+        const keepBucket = byCompany.get(keep)!;
+        mergeBucketInto(keepBucket, byCompany.get(drop)!);
+        keepBucket.company = displayCompanyName(keep, keepBucket.company);
+        byCompany.delete(drop);
+        changed = true;
+      }
+    }
+  }
 };
 
 /** Applied dates further apart than this mean a re-application, not the same one. */
@@ -581,7 +643,7 @@ export const filterApplicationsByLookback = (
 
 export const companyKeyFromApplicationKey = (key: string): string => {
   const idx = key.indexOf("::");
-  return (idx === -1 ? key : key.slice(0, idx)).trim();
+  return normalizeCompany(idx === -1 ? key : key.slice(0, idx));
 };
 
 /** Same-company keys currently listed. Hints only — never a merge or replacement. */

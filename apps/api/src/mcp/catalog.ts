@@ -28,6 +28,11 @@ import {
   type RecordJdRecoveryOutcomeInput,
 } from "../services/gmail/jdRecovery/jdRecoveryQueue.types.js";
 import type { SaveJobProspectInput, SaveJobProspectResult } from "../services/gmail/jdRecovery/jobProspects.service.js";
+import type {
+  ListUnconfirmedInput,
+  MarkProspectAppliedInput,
+  MarkProspectAppliedResult,
+} from "../services/gmail/jdRecovery/prospectApplication.service.js";
 import type { ApprovedRevisionOverlay } from "../services/scoring/scoreRevision.types.js";
 import {
   isReviewRequiredCode,
@@ -86,6 +91,8 @@ export type McpDeps = {
   recordJdRecoveryOutcome?: (input: RecordJdRecoveryOutcomeInput) => Promise<unknown>;
   getJdRecoveryProgress?: (input: JdRecoveryProgressInput) => Promise<unknown>;
   syncJdRecoveryQueueAfterCandidate?: (result: SubmitJdCandidateResult) => Promise<void>;
+  markProspectApplied?: (input: MarkProspectAppliedInput) => Promise<MarkProspectAppliedResult>;
+  listUnconfirmedProspects?: (input: ListUnconfirmedInput) => Promise<unknown>;
   classifyApplicationPostingKind?: (input: {
     applicationKey: string;
     postingKind: (typeof POSTING_KINDS)[number];
@@ -241,11 +248,16 @@ export const SaveJobProspectInputSchema = z
       z.string().url().optional(),
     ),
     salary: optionalText(200),
+    applied: z.boolean().optional(),
+    appliedAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "appliedAt must be YYYY-MM-DD")
+      .optional(),
   })
   .strict();
 
-const saveJobProspect = async (args: z.infer<typeof SaveJobProspectInputSchema>, deps: McpDeps) =>
-  deps.saveJobProspect({
+const saveJobProspect = async (args: z.infer<typeof SaveJobProspectInputSchema>, deps: McpDeps) => {
+  const saved = await deps.saveJobProspect({
     rawText: args.rawText,
     company: args.company,
     title: args.title,
@@ -255,6 +267,54 @@ const saveJobProspect = async (args: z.infer<typeof SaveJobProspectInputSchema>,
     sourceUrl: args.sourceUrl,
     salary: args.salary,
   });
+  // Standing rule: assume applied unless the user says otherwise. A re-save of an existing
+  // prospect only changes its state when applied is passed explicitly.
+  const applied = args.applied ?? (saved.duplicate ? undefined : true);
+  if (applied === undefined || !deps.markProspectApplied) return saved;
+  const marked = await deps.markProspectApplied({ prospectId: saved.id, applied, appliedAt: args.appliedAt });
+  return { ...saved, applied: marked };
+};
+
+export const MarkProspectAppliedInputSchema = z
+  .object({
+    prospectId: optionalText(100),
+    company: optionalText(200),
+    title: optionalText(300),
+    applied: z.boolean().default(true),
+    appliedAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "appliedAt must be YYYY-MM-DD")
+      .optional(),
+  })
+  .strict()
+  .refine((v) => Boolean(v.prospectId) || (Boolean(v.company) && Boolean(v.title)), {
+    message: "Pass prospectId, or both company and title.",
+  });
+
+const markProspectApplied = async (args: z.infer<typeof MarkProspectAppliedInputSchema>, deps: McpDeps) => {
+  if (!deps.markProspectApplied) {
+    throw new McpToolError("NOT_AVAILABLE", "Marking applied is not available in this server.");
+  }
+  return deps.markProspectApplied(args);
+};
+
+export const ListUnconfirmedProspectsInputSchema = z
+  .object({
+    minAgeDays: z.number().int().min(0).max(60).default(3),
+    maxAgeDays: z.number().int().min(1).max(120).default(45),
+    includeApplied: z.boolean().default(true),
+  })
+  .strict();
+
+const listUnconfirmedProspects = async (
+  args: z.infer<typeof ListUnconfirmedProspectsInputSchema>,
+  deps: McpDeps,
+) => {
+  if (!deps.listUnconfirmedProspects) {
+    throw new McpToolError("NOT_AVAILABLE", "Listing unconfirmed prospects is not available in this server.");
+  }
+  return deps.listUnconfirmedProspects(args);
+};
 
 const matchesQuery = (app: GmailApplication, query: string | undefined): boolean => {
   if (!query) return true;
@@ -491,9 +551,37 @@ export const MCP_TOOLS = [
   {
     name: "save_job_prospect" as const,
     description:
-      "Save a pasted job description as a prospect for Gmail matching. Extract company and title from the JD and pass the original pasted text plus any other structured fields you have. Location, seniority, requisition ID, posting URL, and salary are optional. Returns explicit `matchStatus`: awaiting_gmail_application, queued_for_scoring, pending_review, scored, or unmatched, plus a `note` you must report to the user. The save itself does not create an application. Unique company/title matches may start a background recovery run that attaches, scores, and tracker-syncs; `recoveryQueued: true` means that run was started or already running, not that scoring finished. `matchStatus: scored` is the only value that means an authoritative fit already exists. Uncertain matches stay pending_review for dashboard confirmation. Check get_application_details afterwards when queued.",
+      "Save a pasted job description as a prospect for Gmail matching. Extract company and title from the JD and pass the original pasted text plus any other structured fields you have. Location, seniority, requisition ID, posting URL, and salary are optional. New prospects are assumed applied (the user's standing rule): unless you pass `applied: false`, a new save is marked applied today (or appliedAt YYYY-MM-DD) and the result includes an `applied` block from mark_prospect_applied. Do not call this tool for postings the user will not apply to (a hard gate such as clearance, citizenship, location, or years required, or a clear misfit); recommend skipping instead. Pass `applied: false` only when the user says they have not applied. Before moving on to the next role, confirm with the user that they applied; if they say they did not, call mark_prospect_applied with applied: false. Re-saving an existing prospect leaves its applied state alone unless `applied` is passed. Returns explicit `matchStatus`: awaiting_gmail_application, queued_for_scoring, pending_review, scored, or unmatched, plus a `note` you must report to the user. The save itself does not create an application. Unique company/title matches may start a background recovery run that attaches, scores, and tracker-syncs; `recoveryQueued: true` means that run was started or already running, not that scoring finished. `matchStatus: scored` is the only value that means an authoritative fit already exists. Uncertain matches stay pending_review for dashboard confirmation. Check get_application_details afterwards when queued.",
     inputSchema: SaveJobProspectInputSchema,
     execute: saveJobProspect,
+  },
+  {
+    name: "mark_prospect_applied" as const,
+    description:
+      "Record that the user did (applied: true, default) or did not (applied: false) apply to a saved prospect. Use it when the user says they applied, since many applications never send a confirmation email. Identify the prospect by prospectId, or by company plus title; saved duplicates of the same posting are updated together. appliedAt is YYYY-MM-DD and defaults to today. When no Gmail application matches yet, the JD is scored and added to the tracker as applied in the background (`tracker: creating`), and a confirmation email that arrives later links to that tracker row. applied: false removes the prospect from list_unconfirmed_prospects and deletes the tracker row this tool created for it (never a pre-existing one). Report the returned `note` to the user. On PROSPECT_AMBIGUOUS or PROSPECT_NOT_FOUND, retry with a prospectId from the error's options.",
+    inputSchema: MarkProspectAppliedInputSchema,
+    annotations: {
+      title: "Mark prospect applied",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    execute: markProspectApplied,
+  },
+  {
+    name: "list_unconfirmed_prospects" as const,
+    description:
+      "Read-only. List saved prospects that are not accounted for: `needs_answer` means saved at least minAgeDays ago (default 3), not matched to any Gmail application, and never marked applied or not applied; `applied_no_email` means the user said they applied but no confirmation email has matched yet. Saved duplicates of one posting are collapsed (duplicateIds). Check this at the start of a job-description review and ask the user about each needs_answer prospect, then record the answer with mark_prospect_applied.",
+    inputSchema: ListUnconfirmedProspectsInputSchema,
+    annotations: {
+      title: "List unconfirmed prospects",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    execute: listUnconfirmedProspects,
   },
   {
     name: "list_missing_job_descriptions" as const,

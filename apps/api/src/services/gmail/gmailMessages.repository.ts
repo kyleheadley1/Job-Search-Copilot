@@ -10,6 +10,8 @@ export type StoredGmailMessage = {
   date: string;
   from: string;
   subject: string;
+  /** Hiring-platform tenant id when known (workday:evolent, ashby:uuid, …). */
+  platformAccount?: string;
   prefilterPassed: boolean;
   prefilterReason: string;
   prefilterVersion?: number;
@@ -143,6 +145,25 @@ export const gmailMessagesRepository = {
     const docs = await col
       .find({ date: { $gte: sinceIso }, "classification.isApplicationEmail": true })
       .sort({ date: 1 })
+      .toArray();
+    return docs.map(({ _id, ...rest }) => ({ ...rest, id: rest.id ?? _id }));
+  },
+
+  /**
+   * Recent human-looking mail for a company (classified or not). Used to prefer confirmation
+   * threads over calendar invites when drafting thank-yous / follow-ups.
+   */
+  async listPersonMessagesForCompany(companyKey: string, limit = 40): Promise<StoredGmailMessage[]> {
+    if (!companyKey) return [];
+    const col = await this.collection();
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escape(companyKey), "i");
+    const docs = await col
+      .find({
+        $or: [{ "classification.company": re }, { subject: re }, { from: re }],
+      })
+      .sort({ date: -1 })
+      .limit(limit)
       .toArray();
     return docs.map(({ _id, ...rest }) => ({ ...rest, id: rest.id ?? _id }));
   },

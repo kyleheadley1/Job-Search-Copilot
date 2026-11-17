@@ -78,7 +78,13 @@ assistantRouter.get("/proposals/:id/reply-target", async (req, res, next) => {
 });
 
 const ApproveSchema = z.object({
-  email: z.object({ to: z.string().trim().min(3).max(320), body: z.string().trim().min(1).max(5000) }).optional(),
+  email: z
+    .object({
+      to: z.string().trim().min(3).max(320),
+      subject: z.string().trim().min(1).max(500).optional(),
+      body: z.string().trim().min(1).max(5000),
+    })
+    .optional(),
 });
 
 assistantRouter.post("/proposals/:id/approve", async (req, res, next) => {

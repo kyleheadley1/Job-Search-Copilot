@@ -26,14 +26,22 @@ const findApplication = async (appKey: string) => {
   return app;
 };
 
-export const replyTargetFor = async (appKey: string, preferEmailId?: string): Promise<ReplyTarget> =>
-  resolveReplyTarget(await findApplication(appKey), preferEmailId);
+export const replyTargetFor = async (
+  appKey: string,
+  preferEmailId?: string,
+  opts?: { kind?: string },
+): Promise<ReplyTarget> =>
+  resolveReplyTarget(await findApplication(appKey), preferEmailId, {
+    allowCompose: true,
+    kind: opts?.kind,
+  });
 
 export const executeEmailDraft = async (input: {
   appKey: string;
   preferEmailId?: string;
   to: string;
   body: string;
+  subject?: string;
   source: OutboxEntry["source"];
   sourceId: string;
   kind: string;
@@ -41,12 +49,13 @@ export const executeEmailDraft = async (input: {
   if (!(await gmailAuth.getStatus()).canCreateDrafts) {
     throw new DraftsNotAllowedError("Reconnect Gmail to allow drafts (create-only; the app can never send).");
   }
-  // The thread is re-resolved on the server; the client only supplies the recipient and approved text.
-  const target = await replyTargetFor(input.appKey, input.preferEmailId);
+  // The thread is re-resolved on the server; the client supplies recipient, subject, and approved text.
+  const target = await replyTargetFor(input.appKey, input.preferEmailId, { kind: input.kind });
   return createReplyDraft({
     target,
     to: input.to,
     body: input.body,
+    subject: input.subject,
     log: { source: input.source, sourceId: input.sourceId, kind: input.kind, appKey: input.appKey },
   });
 };

@@ -70,7 +70,11 @@ agentRouter.get("/suggestions/:id/reply-target", async (req, res, next) => {
   }
 });
 
-const DraftBodySchema = z.object({ to: z.string().trim().min(3).max(320), body: z.string().trim().min(1).max(5000) });
+const DraftBodySchema = z.object({
+  to: z.string().trim().min(3).max(320),
+  subject: z.string().trim().min(1).max(500),
+  body: z.string().trim().min(1).max(5000),
+});
 
 agentRouter.post("/suggestions/:id/draft", async (req, res, next) => {
   try {

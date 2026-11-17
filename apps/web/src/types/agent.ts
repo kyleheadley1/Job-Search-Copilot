@@ -12,6 +12,8 @@ export type AgentSuggestion = {
   reason: string;
   priority: number;
   dueAt?: string;
+  /** Interview / conversation time; used to freshen "today"/"yesterday" when opening a draft. */
+  eventAt?: string;
   gmailUrl?: string;
   trackerJobId?: string;
   draftable: boolean;
@@ -33,6 +35,8 @@ export type AgentRunSummary = {
 export type ReplyTarget = {
   emailId: string;
   threadId: string;
+  /** reply = continue a person thread; compose = brand-new email (never a calendar invite). */
+  mode?: "reply" | "compose";
   /** Empty when the thread only has automated senders. */
   to: string;
   subject: string;

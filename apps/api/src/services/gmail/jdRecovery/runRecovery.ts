@@ -9,6 +9,7 @@ import type { ResumeContextSet } from "../../../types/resumeContext.js";
 import { recomputeStoredJobScore } from "../../../lib/recomputeStoredJobScore.js";
 import { presentFitForDisplay, sealAuthoritativeScore } from "../../../lib/authoritativeScore.js";
 import type { ApprovedRevisionOverlay } from "../../scoring/scoreRevision.types.js";
+import { companyKeyVariants, resolveCompanyKey } from "../companyIdentity.js";
 import {
   getGmailApplications,
   normalizeCompany,
@@ -969,7 +970,7 @@ export const refreshOutcomes = async (
   return updated;
 };
 
-const companyKeyOf = (key: string) => key.split("::")[0] ?? key;
+const companyKeyOf = (key: string) => resolveCompanyKey(key.split("::")[0] ?? "");
 
 const ROLE_CARRY_OVER_SIMILARITY = 0.6;
 
@@ -979,26 +980,38 @@ const sameApplication = (app: GmailApplication, e: ApplicationEvaluation): boole
   e.appliedAt === app.appliedAt ||
   roleSimilarity(app.role, e.role) >= ROLE_CARRY_OVER_SIMILARITY;
 
+const evalRank = (e: ApplicationEvaluation | undefined): number =>
+  e?.recovery.status === "scored" ? 0 : e ? 1 : 2;
+
 /**
  * Application keys are company + role words, so they shift when a later email adds or rewords the
- * role. Move the old evaluation to the new key instead of recovering (and re-scoring) from scratch.
+ * role (or an alias/platform merge renames the company). Move the old evaluation to the new key
+ * instead of recovering (and re-scoring) from scratch. A scored orphan also replaces a weaker
+ * row already sitting on the live key (e.g. not_found after Evolent → Evolent Health).
  */
 export const adoptRekeyedEvaluations = async (
   apps: GmailApplication[],
   existing: Map<string, ApplicationEvaluation>,
 ): Promise<number> => {
-  const missing = apps.filter((a) => !existing.has(a.key));
-  if (missing.length === 0) return 0;
+  const candidates = apps.filter((a) => evalRank(existing.get(a.key)) > 0);
+  if (candidates.length === 0) return 0;
   const liveKeys = new Set(apps.map((a) => a.key));
   const orphans = (
-    await evaluationsRepository.findByCompanyKeys([...new Set(missing.map((a) => companyKeyOf(a.key)))])
+    await evaluationsRepository.findByCompanyKeys([
+      ...new Set(candidates.flatMap((a) => companyKeyVariants(companyKeyOf(a.key)))),
+    ])
   ).filter((e) => !liveKeys.has(e.key));
-  const rank = (e: ApplicationEvaluation) => (e.recovery.status === "scored" ? 0 : 1);
-  orphans.sort((a, b) => rank(a) - rank(b));
+  orphans.sort((a, b) => evalRank(a) - evalRank(b));
 
   let moved = 0;
-  for (const app of missing) {
-    const idx = orphans.findIndex((e) => companyKeyOf(e.key) === companyKeyOf(app.key) && sameApplication(app, e));
+  for (const app of candidates) {
+    const current = existing.get(app.key);
+    const idx = orphans.findIndex(
+      (e) =>
+        companyKeyOf(e.key) === companyKeyOf(app.key) &&
+        sameApplication(app, e) &&
+        evalRank(e) < evalRank(current),
+    );
     if (idx < 0) continue;
     const [orphan] = orphans.splice(idx, 1);
     const adopted: ApplicationEvaluation = {

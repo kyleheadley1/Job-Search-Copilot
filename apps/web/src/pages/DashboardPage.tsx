@@ -11,6 +11,7 @@ import {
 } from "../components/InterviewBriefViews";
 import { InsightsCard } from "../components/InsightsCard";
 import { NextStepsCard } from "../components/NextStepsCard";
+import { UnconfirmedProspectsCard } from "../components/UnconfirmedProspectsCard";
 import { ScoringDetailsPanel } from "../components/ScoringDetailsPanel";
 import {
   DEMO_ACTIONS,
@@ -460,7 +461,14 @@ function UpcomingInterviewsCard({
 
   const scheduledKeys = new Set(interviews.map((iv) => iv.key));
   const actionKeys = new Set(actions.map((a) => a.key));
-  const unscheduled = active.filter((a) => !scheduledKeys.has(a.key) && !actionKeys.has(a.key));
+  // Only true "no calendar" cases — apps whose scheduled slot already passed are still
+  // actively interviewing, but they shouldn't look like an upcoming prep target.
+  const unscheduled = active.filter(
+    (a) =>
+      !scheduledKeys.has(a.key) &&
+      !actionKeys.has(a.key) &&
+      !a.interviewRounds.some((r) => r.scheduledAt && !r.cancelled),
+  );
   const firstRowByKey = new Map<string, string>();
   for (const iv of interviews) if (!firstRowByKey.has(iv.key)) firstRowByKey.set(iv.key, `${iv.key}-${iv.roundNumber}`);
 
@@ -1655,6 +1663,8 @@ function DashboardView({ variant }: { variant: "live" | "demo" }) {
             onTrackerChanged={isDemo ? undefined : () => void loadApplications()}
             demoPanel={isDemo ? DEMO_NEXT_STEPS : undefined}
           />
+
+          <UnconfirmedProspectsCard disabled={isDemo} onChanged={() => void loadApplications()} />
 
           <UpcomingInterviewsCard
             key={isDemo ? "demo-upcoming" : "live-upcoming"}

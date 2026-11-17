@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { freshenRelativeCopy } from "../lib/freshenRelativeCopy";
 import type { AgentKind, AgentPanel, AgentSuggestion, DraftCreated } from "../types/agent";
 import { DraftEditor } from "./DraftEditor";
 
@@ -45,13 +46,24 @@ function SuggestionRow({
   const [showDraft, setShowDraft] = useState(false);
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [freshDraft, setFreshDraft] = useState<string | null>(null);
   const kind = KIND_LABEL[s.kind];
   const loadTarget = useCallback(() => api.agentReplyTarget(s.id), [s.id]);
-  const create = useCallback((to: string, body: string) => api.agentCreateDraft(s.id, to, body), [s.id]);
+  const create = useCallback(
+    (to: string, subject: string, body: string) => api.agentCreateDraft(s.id, to, subject, body),
+    [s.id],
+  );
+
+  const draftForNow = useCallback(() => {
+    const text = freshenRelativeCopy(s.draft ?? "", s.eventAt);
+    setFreshDraft(text || null);
+    return text;
+  }, [s.draft, s.eventAt]);
 
   const copy = async () => {
-    if (!s.draft) return;
-    await navigator.clipboard.writeText(s.draft);
+    const text = draftForNow();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
@@ -64,17 +76,17 @@ function SuggestionRow({
       <td style={{ verticalAlign: "top" }}>
         <strong>{s.title}</strong>
         <div className="muted smallText">
-          {s.reason}
+          {freshenRelativeCopy(s.reason, s.eventAt)}
           {s.dueAt && <> · {dueText(s.dueAt)}</>}
         </div>
-        {showDraft && s.draft && !editing && (
+        {showDraft && (freshDraft ?? s.draft) && !editing && (
           <pre className="smallText" style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0" }}>
-            {s.draft}
+            {freshDraft ?? s.draft}
           </pre>
         )}
         {editing && (
           <DraftEditor
-            initialBody={s.draft ?? ""}
+            initialBody={freshDraft ?? s.draft ?? ""}
             loadTarget={loadTarget}
             create={create}
             onCreated={onDrafted}
@@ -85,7 +97,14 @@ function SuggestionRow({
       <td style={{ whiteSpace: "nowrap", verticalAlign: "top" }} className="smallText">
         {s.draft && (
           <>
-            <button type="button" className="linkButton smallText" onClick={() => setShowDraft((v) => !v)}>
+            <button
+              type="button"
+              className="linkButton smallText"
+              onClick={() => {
+                if (!showDraft) draftForNow();
+                setShowDraft((v) => !v);
+              }}
+            >
               {showDraft ? "Hide draft" : "Draft"}
             </button>
             {showDraft && (
@@ -104,8 +123,11 @@ function SuggestionRow({
             <button
               type="button"
               className="linkButton smallText"
-              onClick={() => setEditing(true)}
-              title="Review the recipient and text, then create a draft in this thread. Nothing is sent."
+              onClick={() => {
+                draftForNow();
+                setEditing(true);
+              }}
+              title="Review the recipient, subject, and text, then create a draft. Nothing is sent."
             >
               Create Gmail draft
             </button>
