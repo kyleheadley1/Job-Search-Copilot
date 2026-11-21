@@ -75,6 +75,8 @@ const ANALYST_CORE_PATTERNS: RegExp[] = [
 
 const SOFTWARE_BUILDING_PATTERNS: RegExp[] = [
   /\b(?:build|develop|write|ship|own|design|implement)\s+(?:and\s+)?(?:software|code|features?|systems?|services?|applications?)\b/i,
+  /\b(?:build|develop|design|implement|maintain)(?:s|ed|ing)?\b.{0,40}\b(?:web\s+applications?|internal\s+applications?|web\s+apps?|dashboards?|api\s+integrations?)\b/i,
+  /\bfull[-\s]?stack\s+(?:engineering|web\s+development)\b/i,
   /\bsoftware\s+engineer(?:ing)?\b/i,
   /\bbackend\s+engineer\b/i,
   /\bfull[-\s]?stack\s+engineer\b/i,
@@ -351,6 +353,18 @@ export const classifyRoleFunction = (job: ExtractedJobData): RoleFunctionClassif
 
   const titleIsCoreSwe = CORE_SWE_TITLE_RE.test(title);
   if (titleIsCoreSwe && buildingSignals >= 2 && analystSignals === 0) {
+    return {
+      detected: false,
+      kind: null,
+      label: null,
+      note: "",
+      sieResumeSignal,
+    };
+  }
+
+  // "Solutions Engineer" titles at schools and in-house IT teams are often hands-on
+  // builders. Duties that are mostly building software override the title.
+  if (titleMatch?.kind === "solutions_engineer" && buildingSignals >= 3 && analystSignals <= 1) {
     return {
       detected: false,
       kind: null,

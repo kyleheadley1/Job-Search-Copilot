@@ -100,6 +100,7 @@ Rules:
 - Calendar invites, confirmations, and reschedules are about an already-arranged round: advancesToNextRound is false.
 - Do not count the scheduling coordinator as an interviewer unless they run the interview. Give only real job titles in parentheses; omit calendar roles like "organizer". Never list the candidate.
 - scheduledAt: only a confirmed, specific date and time (calendar invite, "confirmed for", "see you on"). Proposed slots, availability requests, and scheduling links are null. Resolve relative dates ("tomorrow", "Monday") against the email's Date. If the email gives a time but no date or weekday (e.g. "4:30 PM - 5:00 PM (EDT)" alone), return null: never assume it is the email's own date. Use the timezone the email states; if none is stated, use the candidate's timezone given below.
+- US civil-time offsets must match the interview calendar date (not "always daylight"): after the first Sunday in November use standard time (PT=-08:00 / PST, ET=-05:00 / EST, MT=-07:00 / MST, CT=-06:00 / CST). From the second Sunday in March through that November switch use daylight (PT=-07:00 / PDT, ET=-04:00 / EDT, etc.). "1:40 PM PT" on 2026-11-19 is "2026-11-19T13:40:00-08:00", never -07:00. Prefer an explicit numeric offset in the ISO string.
 - Never guess facts the email does not support; use null.`;
 
 /** Model output is trusted only when it parses to a real instant. */
@@ -208,6 +209,16 @@ const startsNewRound = (current: InterviewRound, detail: InterviewDetail | undef
 const sameScheduledSlot = (current: InterviewRound, detail: InterviewDetail | undefined): boolean =>
   Boolean(detail?.scheduledAt && current.scheduledAt && detail.scheduledAt === current.scheduledAt);
 
+/**
+ * True when this email is (or looks like) a real time change — not a candidate "I'll be there"
+ * confirmation that restates the same slot and can mis-convert PT/ET around DST.
+ */
+export const looksLikeRescheduleEmail = (subject: string): boolean =>
+  /^(?:(?:updated|cancelled|canceled)\s+)?invitation\b/i.test(subject.trim()) ||
+  /\b(reschedul\w*|moved (?:to|your interview)|new time|time change|updated (?:time|interview|invitation))\b/i.test(
+    subject,
+  );
+
 /** Fold an application's interview emails (oldest first) into numbered rounds. */
 export const buildInterviewRounds = (interviewEmails: StoredGmailMessage[]): InterviewRound[] => {
   const rounds: InterviewRound[] = [];
@@ -221,8 +232,11 @@ export const buildInterviewRounds = (interviewEmails: StoredGmailMessage[]): Int
       current.focus ??= detail?.focus ?? null;
       current.interviewers ??= detail?.interviewers ?? null;
       if (detail?.scheduledAt) {
-        current.scheduledAt = detail.scheduledAt;
-        current.durationMinutes = detail.durationMinutes ?? current.durationMinutes;
+        // Keep the first confirmed slot unless this email is a calendar update / explicit reschedule.
+        if (!current.scheduledAt || looksLikeRescheduleEmail(m.subject) || detail.scheduledAt === current.scheduledAt) {
+          current.scheduledAt = detail.scheduledAt;
+          current.durationMinutes = detail.durationMinutes ?? current.durationMinutes;
+        }
         current.cancelled = Boolean(detail.cancelled);
       } else if (detail?.cancelled) {
         current.cancelled = true;

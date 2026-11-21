@@ -47,6 +47,18 @@ const hardRequiredBlob = (job: ExtractedJobData): string =>
 const preferredBlob = (job: ExtractedJobData): string =>
   normalizeText([...(job.preferredSkills ?? [])].join("\n"));
 
+const IAM_TERM_RE = /\b(saml|oauth|oidc|ldap|iam|sso)\b/i;
+
+const nonPreferredBlob = (job: ExtractedJobData): string =>
+  normalizeText(
+    [
+      job.title,
+      ...(job.requiredSkills ?? []),
+      ...(job.requirements ?? []),
+      ...(job.responsibilities ?? []),
+    ].join("\n"),
+  );
+
 const DESIGN_JD_SIGNALS =
   /\b(figma|design\s+system|visual\s+design|ui\/ux|ux\s+design|design\s+portfolio|wireframe|prototyp|pixel[-\s]?perfect|interaction\s+design)\b/i;
 
@@ -318,22 +330,28 @@ export const detectEnterpriseIamSpecializationGap = (
   if (!detectEnterpriseIamSpecialization(job)) return undefined;
 
   const inTitle = titleNamesIam(job);
-  const inRequired = /\b(saml|oauth|oidc|ldap|iam|sso)\b/i.test(requiredBlob(job));
+  // Required section only. The extracted `stack` list mixes in preferred-only tools,
+  // so it must not count as evidence that IAM is required.
+  const inRequired = IAM_TERM_RE.test(hardRequiredBlob(job));
+  const inPreferred = IAM_TERM_RE.test(preferredBlob(job));
+  // Signals outside the preferred list (title, responsibilities, requirements).
+  const coreBlob = nonPreferredBlob(job);
   const signalCount = [
-    /\bsaml\b/i.test(structuredBlob(job)),
-    /\boauth\b/i.test(structuredBlob(job)),
-    /\boidc\b/i.test(structuredBlob(job)),
-    /\bldap\b/i.test(structuredBlob(job)),
+    /\bsaml\b/i.test(coreBlob),
+    /\boauth\b/i.test(coreBlob),
+    /\boidc\b/i.test(coreBlob),
+    /\bldap\b/i.test(coreBlob),
   ].filter(Boolean).length;
 
+  // A preferred-only mention is not a specialization gap worth docking.
   if (!inTitle && !inRequired && signalCount < 3) return undefined;
 
   const severity = resolveSeverity({
     inTitle,
     inRequired,
-    inPreferred: false,
+    inPreferred,
     candidateHasAdjacent: false,
-    signalCount: Math.max(signalCount, 3),
+    signalCount,
   });
 
   return finalizeGap({
@@ -346,7 +364,7 @@ export const detectEnterpriseIamSpecializationGap = (
     lever: "none",
     jdSide: "enterprise IAM / SAML-OIDC",
     resumeSide: "OAuth-only",
-    signalCount: Math.max(signalCount, 3),
+    signalCount: Math.max(signalCount, 1),
   });
 };
 

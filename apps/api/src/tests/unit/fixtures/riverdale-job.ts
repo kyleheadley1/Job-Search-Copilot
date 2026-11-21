@@ -1,0 +1,33 @@
+export const riverdaleJob = {
+  company: "Riverdale Country School",
+  title: "Riverdale Country School — Software Solutions Engineer · Full-Stack Engineering · Full-time · Bronx, NY, USA · In-person",
+  stack: ["Google Workspace", "Google Cloud", "Google Apps Script", "Sheets/Drive APIs", "BigQuery", "REST APIs", "SAML", "OAuth"],
+  requiredSkills: [],
+  preferredSkills: [
+    "Full-stack web development; REST APIs and data modeling; data visualization, warehousing, BigQuery; self-auditing systems for security/accessibility/compliance; SSO/identity integration (SAML, OAuth).",
+    "REST APIs",
+  ],
+  domainTags: ["Pre-K through grade 12", "independent school", "education"],
+  responsibilities: [
+    "Designing and maintaining interactive web applications that allow students and families to visualize academic history and plan future course progressions.",
+    "Exploring and implementing AI-driven conversational interfaces to allow community members to query institutional data securely and efficiently.",
+    "Building and supporting internal applications, including a centralized job description management system and administrative auditing tools for cloud storage.",
+    "Developing dynamic, data-driven organizational charts and departmental flowcharts that update in real-time based on school supervisory data.",
+    "Architecting and maintaining the \"glue\" between core platforms (Veracross SIS, ADP and Lever for HRIS/ATS), ensuring seamless data flow for account lifecycles and administrative alerts.",
+    "Leading the effort to centralize disparate data sources into a unified warehouse to power school-wide reporting and analytics.",
+    "Creating proactive \"Student Dashboards\" for Deans and Counselors that aggregate grades, attendance, and feedback into a single, actionable interface.",
+    "Developing scripts and API integrations to replace manual processes, such as syncing athletics schedules and admissions communications.",
+    "Using AI extensively is expected, encouraged, and supported, both as an accelerant for your own development workflow and as a building block within applications.",
+    "Clear, accurate, comprehensive documentation; web accessibility standards (WCAG); soliciting community feedback.",
+  ],
+  requirements: [
+    "A minimum of 1-3 years of professional development experience, or equivalent project experience in a related field.",
+    "Development experience in Google Workspace and the Google Cloud ecosystem, including hands-on experience with Google Apps Script and the Sheets/Drive APIs.",
+    "A demonstrated understanding of one or more web frameworks.",
+    "A demonstrated understanding of APIs, data modeling and visualization.",
+    "Excellent analytical skills and the ability to translate complex administrative needs into elegant technical solutions.",
+    "Strong organizational skills; manage the full SDLC for multiple simultaneous projects.",
+    "Exceptional interpersonal skills and the ability to explain technical concepts to non-technical stakeholders (Deans, Parents, and Students).",
+    "Awareness of information security standards, data privacy and role-based access control, especially in an educational environment.",
+  ],
+};

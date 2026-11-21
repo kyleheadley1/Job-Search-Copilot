@@ -203,13 +203,38 @@ describe("multi-step process (recruiter screen, then a meeting with someone else
 
 describe("interview scheduling", () => {
   it("keeps the latest time when a round is rescheduled, and merges invites for the same slot", () => {
-    const rounds = buildInterviewRounds([
-      msg("interview", "2026-09-01T10:00:00.000Z", { kind: "technical", scheduledAt: "2026-09-10T19:00:00.000Z" }),
-      msg("interview", "2026-09-02T10:00:00.000Z", { scheduledAt: "2026-09-10T19:00:00.000Z" }),
-      msg("interview", "2026-09-05T10:00:00.000Z", { scheduledAt: "2026-09-12T15:00:00.000Z", durationMinutes: 45 }),
-    ]);
+    const invite = msg("interview", "2026-09-01T10:00:00.000Z", {
+      kind: "technical",
+      scheduledAt: "2026-09-10T19:00:00.000Z",
+    });
+    const sameSlot = msg("interview", "2026-09-02T10:00:00.000Z", { scheduledAt: "2026-09-10T19:00:00.000Z" });
+    const reschedule = msg("interview", "2026-09-05T10:00:00.000Z", {
+      scheduledAt: "2026-09-12T15:00:00.000Z",
+      durationMinutes: 45,
+    });
+    reschedule.subject = "Updated invitation: Interview with Acme @ Fri Sep 12";
+    const rounds = buildInterviewRounds([invite, sameSlot, reschedule]);
     expect(rounds).toHaveLength(1);
     expect(rounds[0]).toMatchObject({ scheduledAt: "2026-09-12T15:00:00.000Z", durationMinutes: 45, cancelled: false });
+  });
+
+  it("does not let a confirmation reply overwrite the invite time with a DST-skewed conversion", () => {
+    const invite = msg("interview", "2026-11-18T00:02:05.000Z", {
+      kind: "final",
+      scheduledAt: "2026-11-19T21:40:00.000Z",
+      durationMinutes: 20,
+    });
+    invite.subject = "You're invited to your Claude Corps final-round interview!";
+    const reply = msg("interview", "2026-11-18T01:45:22.000Z", {
+      kind: "final",
+      // Wrong: treated 1:40 PM PT as PDT (-07) instead of PST (-08) in November.
+      scheduledAt: "2026-11-19T20:40:00.000Z",
+      durationMinutes: 20,
+    });
+    reply.subject = "Re: You're invited to your Claude Corps final-round interview!";
+    const rounds = buildInterviewRounds([invite, reply]);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]!.scheduledAt).toBe("2026-11-19T21:40:00.000Z");
   });
 
   it("marks a round cancelled when a later email cancels it", () => {

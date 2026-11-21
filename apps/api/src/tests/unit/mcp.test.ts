@@ -209,6 +209,8 @@ describe("MCP tool discovery", () => {
       "get_application_insights",
       "save_job_prospect",
       "mark_prospect_applied",
+      "link_prospect_to_application",
+      "repair_receipt_scores",
       "list_unconfirmed_prospects",
       "list_missing_job_descriptions",
       "submit_jd_candidate",

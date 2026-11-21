@@ -29,6 +29,7 @@ import {
 } from "../services/gmail/jdRecovery/jdRecoveryQueue.types.js";
 import type { SaveJobProspectInput, SaveJobProspectResult } from "../services/gmail/jdRecovery/jobProspects.service.js";
 import type {
+  LinkProspectResult,
   ListUnconfirmedInput,
   MarkProspectAppliedInput,
   MarkProspectAppliedResult,
@@ -93,6 +94,8 @@ export type McpDeps = {
   syncJdRecoveryQueueAfterCandidate?: (result: SubmitJdCandidateResult) => Promise<void>;
   markProspectApplied?: (input: MarkProspectAppliedInput) => Promise<MarkProspectAppliedResult>;
   listUnconfirmedProspects?: (input: ListUnconfirmedInput) => Promise<unknown>;
+  linkProspectToApplication?: (input: { prospectId: string; applicationKey: string }) => Promise<LinkProspectResult>;
+  repairReceiptScores?: (input: { apply: boolean; sinceDays?: number }) => Promise<unknown>;
   classifyApplicationPostingKind?: (input: {
     applicationKey: string;
     postingKind: (typeof POSTING_KINDS)[number];
@@ -296,6 +299,37 @@ const markProspectApplied = async (args: z.infer<typeof MarkProspectAppliedInput
     throw new McpToolError("NOT_AVAILABLE", "Marking applied is not available in this server.");
   }
   return deps.markProspectApplied(args);
+};
+
+export const LinkProspectToApplicationInputSchema = z
+  .object({
+    prospectId: z.string().trim().min(1).max(100),
+    applicationKey: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+const linkProspectToApplication = async (
+  args: z.infer<typeof LinkProspectToApplicationInputSchema>,
+  deps: McpDeps,
+) => {
+  if (!deps.linkProspectToApplication) {
+    throw new McpToolError("NOT_AVAILABLE", "Linking prospects is not available in this server.");
+  }
+  return deps.linkProspectToApplication(args);
+};
+
+export const RepairReceiptScoresInputSchema = z
+  .object({
+    apply: z.boolean().default(false),
+    sinceDays: z.number().int().min(1).max(365).default(365),
+  })
+  .strict();
+
+const repairReceiptScores = async (args: z.infer<typeof RepairReceiptScoresInputSchema>, deps: McpDeps) => {
+  if (!deps.repairReceiptScores) {
+    throw new McpToolError("NOT_AVAILABLE", "Receipt-score repair is not available in this server.");
+  }
+  return deps.repairReceiptScores(args);
 };
 
 export const ListUnconfirmedProspectsInputSchema = z
@@ -568,6 +602,34 @@ export const MCP_TOOLS = [
       openWorldHint: false,
     },
     execute: markProspectApplied,
+  },
+  {
+    name: "link_prospect_to_application" as const,
+    description:
+      "Attach a saved prospect (and its saved duplicates) to an existing Gmail application that the automatic matcher missed because the company name or title differs (e.g. prospect \"STLabs\" vs application \"Standard Template Labs\"). Get applicationKey from list_applications and prospectId from list_unconfirmed_prospects. If the application is already scored, this only links it. Otherwise it scores the application from the saved JD (one scoring call) or confirms the matching pending candidate. Only link when the user confirmed it is the same role, or company and title clearly refer to the same posting.",
+    inputSchema: LinkProspectToApplicationInputSchema,
+    annotations: {
+      title: "Link prospect to application",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    execute: linkProspectToApplication,
+  },
+  {
+    name: "repair_receipt_scores" as const,
+    description:
+      "Find scored applications whose stored 'job description' is really an application confirmation page (e.g. a Workable candidate-portal page that repeats the user's own resume and answers), which inflates the fit. With apply: false (default) it only lists them. With apply: true it withdraws those scores (kept in history, not displayed), marks the rows for JD recovery again, and starts a recovery run. Link a saved prospect afterwards to rescore from the real posting.",
+    inputSchema: RepairReceiptScoresInputSchema,
+    annotations: {
+      title: "Repair receipt-page scores",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    execute: repairReceiptScores,
   },
   {
     name: "list_unconfirmed_prospects" as const,

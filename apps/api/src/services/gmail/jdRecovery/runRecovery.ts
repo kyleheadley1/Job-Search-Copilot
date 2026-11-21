@@ -1,4 +1,5 @@
 import { triageJob } from "../../../agents/jobAgent/orchestrator.js";
+import { looksLikeApplicationReceipt, RECEIPT_REASON } from "./applicationReceipt.js";
 import { env } from "../../../config/env.js";
 import { computeJdTextHash } from "../../../lib/jdTextHash.js";
 import { extractJobPostingMetadata, isWeakJobTitle } from "../../../tools/jobPostingMetadataExtract.js";
@@ -488,6 +489,10 @@ export const recoverApplication = async (
     source: EvidenceSource,
     board?: { confirmed: boolean; titleMatches: number; signals?: string[]; location?: string },
   ) => {
+    if (looksLikeApplicationReceipt(posting.text, posting.url)) {
+      attempts.push({ url: posting.url, source, ok: false, reason: RECEIPT_REASON });
+      return;
+    }
     const match = assessJdMatch({
       company: app.company,
       role,
@@ -830,6 +835,11 @@ const scoreUserPosting = async (
   if (evaluation.postingKind === "talent_pool_or_event") {
     throw new IncompleteJdError(
       `${evaluation.key} is classified as a talent-pool or event registration and is not eligible to score`,
+    );
+  }
+  if (looksLikeApplicationReceipt(posting.text, posting.url)) {
+    throw new IncompleteJdError(
+      `${evaluation.key}: this text is an application confirmation page (it repeats your resume), not a job description`,
     );
   }
   const job = await scoreBlind(posting, evaluation.company, evaluation.key);

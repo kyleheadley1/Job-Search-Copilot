@@ -10,11 +10,15 @@ import { resumeContextService } from "../services/resume/resumeContext.js";
 import { proposeClaudeScoringCorrection } from "../services/scoring/claudeScoringProposal.js";
 import { loadApprovedOverlays } from "../services/scoring/scoreRevisions.service.js";
 import {
+  createLiveLinkProspectDeps,
   createLiveProspectApplicationDeps,
+  linkProspectToApplication,
   listUnconfirmedProspects,
   markProspectApplied,
   ProspectApplicationError,
 } from "../services/gmail/jdRecovery/prospectApplication.service.js";
+import { repairReceiptScores } from "../services/gmail/jdRecovery/applicationReceipt.js";
+import { PROSPECT_MATCH_LOOKBACK_DAYS } from "../services/gmail/jdRecovery/prospectMatch.js";
 import { MCP_MAX_DAYS, McpToolError, type McpDeps } from "./catalog.js";
 
 const asToolError = (error: unknown): never => {
@@ -41,6 +45,17 @@ export const createLiveDeps = (): McpDeps => {
     saveJobProspect,
     markProspectApplied: (input) =>
       markProspectApplied(input, createLiveProspectApplicationDeps()).catch(asToolError),
+    linkProspectToApplication: (input) =>
+      linkProspectToApplication(input, createLiveLinkProspectDeps()).catch(asToolError),
+    repairReceiptScores: (input) =>
+      repairReceiptScores(input, {
+        listScoredSince: (since) => evaluationsRepository.listSince(since),
+        invalidateScore: (key, reason) => evaluationsRepository.invalidateScore(key, reason),
+        restartRecovery: async () => {
+          const { startRecoveryRun } = await import("../services/gmail/jdRecovery/runRecovery.js");
+          return startRecoveryRun(PROSPECT_MATCH_LOOKBACK_DAYS);
+        },
+      }),
     listUnconfirmedProspects: (input) =>
       listUnconfirmedProspects(input, createLiveProspectApplicationDeps()).catch(asToolError),
     submitJdCandidate: (input) =>

@@ -1,4 +1,5 @@
 import { htmlToPlainText } from "../gmailClient.js";
+import { looksLikeApplicationReceipt } from "./applicationReceipt.js";
 import { classifyJobLink, type JobLinkKind } from "./emailEvidence.js";
 
 export type PostingSource = JobLinkKind | "workable" | "generic";
@@ -19,7 +20,7 @@ export type FetchedPosting = {
 
 export class PostingFetchError extends Error {
   constructor(
-    readonly reason: "http_error" | "too_short" | "closed" | "not_found" | "unsupported",
+    readonly reason: "http_error" | "too_short" | "closed" | "not_found" | "unsupported" | "application_receipt",
     message: string,
   ) {
     super(message);
@@ -341,6 +342,9 @@ export const validatePosting = (
   }
   if (text.length < MIN_POSTING_CHARS) {
     throw new PostingFetchError("too_short", `Posting at ${url} has only ${text.length} chars`);
+  }
+  if (looksLikeApplicationReceipt(text, url)) {
+    throw new PostingFetchError("application_receipt", `${url} is an application confirmation page, not a posting`);
   }
   return { ...result, text, url, source };
 };

@@ -251,3 +251,38 @@ describe("Gmail body decoding", () => {
     expect(parsed.body.length).toBeLessThanOrEqual(MAX_BODY_CHARS);
   });
 });
+
+describe("prefilter: direct-from-employer interview emails", () => {
+  it("keeps a final-round invite with no ATS sender", () => {
+    expect(
+      prefilterEmail({
+        from: "Megan Cowden <megan@claudecorps.org>",
+        subject: "You're invited to your Claude Corps final-round interview!",
+        snippet: "Congratulations, you've reached the final round for the Claude Corps Fellowship!",
+        body: "Your interview details. Date: 11/19/2026",
+      }).keep,
+    ).toBe(true);
+  });
+
+  it("keeps an interview-confirmation thread reply", () => {
+    expect(
+      prefilterEmail({
+        from: "Yasten Burton <yasten@claudecorps.org>",
+        subject: "Re: Claude Corps Interview Confirmation",
+        snippet: "I hope you have GREAT interviews during Super Days!",
+        body: "",
+      }).keep,
+    ).toBe(true);
+  });
+
+  it("still drops a job alert", () => {
+    expect(
+      prefilterEmail({
+        from: "alerts@jobs.example.com",
+        subject: "New jobs for you: Software Engineer",
+        snippet: "Jobs you may be interested in",
+        body: "",
+      }).keep,
+    ).toBe(false);
+  });
+});

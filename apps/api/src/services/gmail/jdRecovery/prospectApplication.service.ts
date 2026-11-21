@@ -7,6 +7,7 @@ import {
   roleSimilarity,
   type GmailApplication,
 } from "../gmailApplications.js";
+import type { ApplicationEvaluation } from "./evaluations.repository.js";
 import { describeProspectLinkage } from "./jobProspects.service.js";
 import {
   jobProspectsRepository,
@@ -396,4 +397,96 @@ export const createLiveProspectApplicationDeps = (): ProspectApplicationDeps => 
     await jobsService.removeFromTracker(jobId);
   },
   now: () => new Date(),
+});
+
+/* ------------------------------------------------------------------------------------------------
+ * Linking a saved prospect to an application that already exists under a different company name
+ * or title (e.g. "STLabs" vs "Standard Template Labs"), so the JD attaches without a dashboard step.
+ * ---------------------------------------------------------------------------------------------- */
+
+export type LinkProspectDeps = Pick<ProspectApplicationDeps, "findById" | "findByCompanyKey" | "getApplications"> & {
+  findEvaluation: (key: string) => Promise<ApplicationEvaluation | null>;
+  /** Score an existing candidate row for this prospect (dashboard "confirm"). */
+  confirmCandidate: (key: string, prospectId: string) => Promise<ApplicationEvaluation>;
+  /** Score this JD text against the application. */
+  scoreJdText: (key: string, text: string, url?: string) => Promise<ApplicationEvaluation>;
+  markAttached: (prospectId: string, key: string) => Promise<JobProspect | null>;
+};
+
+export type LinkProspectResult = {
+  prospectIds: string[];
+  applicationKey: string;
+  company: string;
+  role: string | null;
+  action: "already_scored_linked" | "scored_from_prospect" | "confirmed_candidate";
+  fitTotal?: number;
+  note: string;
+};
+
+export const linkProspectToApplication = async (
+  input: { prospectId: string; applicationKey: string },
+  deps: LinkProspectDeps,
+): Promise<LinkProspectResult> => {
+  const group = await resolveProspectGroup({ prospectId: input.prospectId }, deps);
+  const primary = group[0]!;
+  const apps = await deps.getApplications(PROSPECT_MATCH_LOOKBACK_DAYS);
+  const app = apps.find((a) => a.key === input.applicationKey);
+  if (!app) {
+    const hints = apps
+      .filter((a) => normalizeCompany(a.company) === primary.companyKey || a.key.startsWith(primary.companyKey.split(" ")[0] ?? ""))
+      .map((a) => a.key)
+      .slice(0, 10);
+    throw new ProspectApplicationError(
+      "PROSPECT_NOT_FOUND",
+      `No application with key "${input.applicationKey}".${hints.length ? ` Similar keys: ${hints.join(", ")}` : ""}`,
+    );
+  }
+  const evaluation = await deps.findEvaluation(app.key);
+  const ids = group.map((p) => p.id);
+  const base = { prospectIds: ids, applicationKey: app.key, company: app.company, role: app.role };
+  const attachAll = async () => {
+    for (const p of group) await deps.markAttached(p.id, app.key);
+  };
+
+  if (evaluation?.recovery.status === "scored") {
+    await attachAll();
+    return {
+      ...base,
+      action: "already_scored_linked",
+      fitTotal: evaluation.fit?.total,
+      note: `Linked to ${app.company} — ${app.role ?? "(no title)"}. It was already scored, so the score is unchanged.`,
+    };
+  }
+
+  const candidate = evaluation?.recovery.candidates?.find((c) => c.prospectId && ids.includes(c.prospectId));
+  const scored = candidate?.prospectId
+    ? await deps.confirmCandidate(app.key, candidate.prospectId)
+    : await deps.scoreJdText(app.key, primary.cleanedText || primary.rawText, primary.sourceUrl);
+  await attachAll();
+  const fit = scored.fit?.total;
+  return {
+    ...base,
+    action: candidate ? "confirmed_candidate" : "scored_from_prospect",
+    fitTotal: fit,
+    note: `Linked to ${app.company} — ${app.role ?? "(no title)"} and scored from the saved JD${fit != null ? ` (fit ${Math.round(fit)})` : ""}.`,
+  };
+};
+
+export const createLiveLinkProspectDeps = (): LinkProspectDeps => ({
+  findById: (id) => jobProspectsRepository.findById(id),
+  findByCompanyKey: (key) => jobProspectsRepository.findByCompanyKey(key),
+  getApplications: getGmailApplications,
+  findEvaluation: async (key) => {
+    const { evaluationsRepository } = await import("./evaluations.repository.js");
+    return evaluationsRepository.findByKey(key);
+  },
+  confirmCandidate: async (key, prospectId) => {
+    const { confirmCandidate } = await import("./runRecovery.js");
+    return confirmCandidate(key, prospectId);
+  },
+  scoreJdText: async (key, text, url) => {
+    const { scorePastedJd } = await import("./runRecovery.js");
+    return scorePastedJd(key, text, url);
+  },
+  markAttached: (prospectId, key) => jobProspectsRepository.markAttached(prospectId, key),
 });

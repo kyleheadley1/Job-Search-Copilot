@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GmailApplication } from "../../services/gmail/gmailApplications.js";
 import type { JobProspect, ProspectApplicationPatch } from "../../services/gmail/jdRecovery/jobProspects.repository.js";
+import type { ApplicationEvaluation } from "../../services/gmail/jdRecovery/evaluations.repository.js";
 import {
+  linkProspectToApplication,
+  type LinkProspectDeps,
   listUnconfirmedProspects,
   markProspectApplied,
   ProspectApplicationError,
@@ -255,5 +258,64 @@ describe("MCP wiring", () => {
     const deps = { saveJobProspect: vi.fn(async () => ({ id: "n", duplicate: true })), markProspectApplied } as unknown as McpDeps;
     await runMcpTool("save_job_prospect", { rawText: "x".repeat(60), company: "A", title: "B" }, deps);
     expect(markProspectApplied).not.toHaveBeenCalled();
+  });
+});
+
+describe("linkProspectToApplication", () => {
+  const stlApp = app({ key: "standard template::software engineer agents", company: "Standard Template Labs", role: "Software Engineer, Agents" });
+  const linkDeps = (rows: JobProspect[], evaluation: Partial<ApplicationEvaluation> | null) => {
+    const scoreJdText = vi.fn(async () => ({ fit: { total: 81 } }) as unknown as ApplicationEvaluation);
+    const confirmCandidate = vi.fn(async () => ({ fit: { total: 77 } }) as unknown as ApplicationEvaluation);
+    const markAttached = vi.fn(async (id: string, key: string) => {
+      const row = rows.find((r) => r.id === id)!;
+      row.status = "attached";
+      row.attachedKey = key;
+      return row;
+    });
+    const deps: LinkProspectDeps = {
+      findById: async (id) => rows.find((r) => r.id === id) ?? null,
+      findByCompanyKey: async (key) => rows.filter((r) => r.companyKey === key),
+      getApplications: async () => [stlApp],
+      findEvaluation: async () => evaluation as ApplicationEvaluation | null,
+      confirmCandidate,
+      scoreJdText,
+      markAttached,
+    };
+    return { deps, scoreJdText, confirmCandidate, markAttached };
+  };
+  const stl = () => prospect({ id: "s1", company: "STLabs", companyKey: "stlabs", title: "Software Engineer, Agents", cleanedText: "jd text" });
+
+  it("scores from the saved JD and attaches when unscored", async () => {
+    const rows = [stl()];
+    const { deps, scoreJdText } = linkDeps(rows, { recovery: { status: "not_found" } } as never);
+    const result = await linkProspectToApplication({ prospectId: "s1", applicationKey: stlApp.key }, deps);
+    expect(scoreJdText).toHaveBeenCalledWith(stlApp.key, "jd text", undefined);
+    expect(result).toMatchObject({ action: "scored_from_prospect", fitTotal: 81 });
+    expect(rows[0]).toMatchObject({ status: "attached", attachedKey: stlApp.key });
+  });
+
+  it("only links when already scored", async () => {
+    const rows = [stl()];
+    const { deps, scoreJdText } = linkDeps(rows, { recovery: { status: "scored" }, fit: { total: 80 } } as never);
+    const result = await linkProspectToApplication({ prospectId: "s1", applicationKey: stlApp.key }, deps);
+    expect(scoreJdText).not.toHaveBeenCalled();
+    expect(result.action).toBe("already_scored_linked");
+  });
+
+  it("confirms an existing pending candidate for the prospect", async () => {
+    const rows = [stl()];
+    const { deps, confirmCandidate } = linkDeps(rows, {
+      recovery: { status: "unverified", candidates: [{ prospectId: "s1" }] },
+    } as never);
+    const result = await linkProspectToApplication({ prospectId: "s1", applicationKey: stlApp.key }, deps);
+    expect(confirmCandidate).toHaveBeenCalledWith(stlApp.key, "s1");
+    expect(result.action).toBe("confirmed_candidate");
+  });
+
+  it("rejects an unknown application key", async () => {
+    const { deps } = linkDeps([stl()], null);
+    await expect(linkProspectToApplication({ prospectId: "s1", applicationKey: "nope" }, deps)).rejects.toMatchObject({
+      code: "PROSPECT_NOT_FOUND",
+    });
   });
 });

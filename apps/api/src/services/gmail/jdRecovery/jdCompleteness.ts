@@ -1,3 +1,5 @@
+import { looksLikeApplicationReceipt } from "./applicationReceipt.js";
+
 /** Matches MIN_PASTED_JD_CHARS: a complete posting is at least a short real JD, not a snippet. */
 export const MIN_COMPLETE_JD_CHARS = 300;
 const MIN_SECTION_CHARS = 80;
@@ -96,6 +98,8 @@ export type JdCompletenessAssessment = {
   truncated: boolean;
   dutyOk: boolean;
   qualOk: boolean;
+  /** Text is an application confirmation page echoing the applicant's resume. */
+  applicationReceipt: boolean;
 };
 
 /**
@@ -109,13 +113,15 @@ export const assessJdCompleteness = (text: string, minChars = MIN_COMPLETE_JD_CH
   const { duty, qual, body } = collectSections(normalized);
   const dutyOk = sectionLooksReal(duty) || languageHits(body, DUTY_LANGUAGE);
   const qualOk = sectionLooksReal(qual) || languageHits(body, QUAL_LANGUAGE);
+  const applicationReceipt = looksLikeApplicationReceipt(normalized);
   return {
-    complete: normalized.length >= minChars && !truncated && dutyOk && qualOk,
+    complete: normalized.length >= minChars && !truncated && dutyOk && qualOk && !applicationReceipt,
     dutyChars: duty.replace(/\s+/g, " ").trim().length,
     qualChars: qual.replace(/\s+/g, " ").trim().length,
     truncated,
     dutyOk,
     qualOk,
+    applicationReceipt,
   };
 };
 

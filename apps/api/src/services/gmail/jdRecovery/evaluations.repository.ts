@@ -155,6 +155,10 @@ export type ApplicationEvaluation = {
     /** Full scorer output; absent on rows scored before snapshots were stored. */
     detail?: ScoringDetail;
   };
+  /** Scores withdrawn because the stored "JD" was not a real posting; kept for history, never displayed. */
+  supersededFits?: Array<
+    NonNullable<ApplicationEvaluation["fit"]> & { invalidatedAt: string; reason: string; jdTextHash?: string }
+  >;
   diagnostic?: ScoringDiagnostic;
   /** Interview cheat sheet, generated on first request and kept; never feeds the score. */
   interviewBrief?: InterviewBrief;
@@ -278,6 +282,37 @@ export const evaluationsRepository = {
     if (replaced) return strip(replaced);
     const current = await col.findOne({ _id: evaluation.key });
     return current ? strip(current) : evaluation;
+  },
+
+  /**
+   * Withdraw a score whose stored JD was not a real posting, and queue the row for recovery again.
+   * The old fit is kept in supersededFits. Only touches rows that are currently scored.
+   */
+  async invalidateScore(key: string, reason: string): Promise<ApplicationEvaluation | null> {
+    const col = await this.collection();
+    const existing = await col.findOne({ _id: key });
+    if (!existing || existing.recovery.status !== "scored" || !existing.fit) return null;
+    const now = new Date().toISOString();
+    const superseded = [
+      ...(existing.supersededFits ?? []),
+      { ...existing.fit, invalidatedAt: now, reason, jdTextHash: existing.jd?.textHash },
+    ];
+    const doc = await col.findOneAndUpdate(
+      { _id: key, "recovery.status": "scored" },
+      {
+        $set: {
+          supersededFits: superseded,
+          "recovery.status": "unverified",
+          "recovery.reason": reason,
+          "recovery.notes": [reason],
+          recoveryVersion: 0,
+          updatedAt: now,
+        },
+        $unset: { fit: "", jd: "", outcomeAtScoring: "", "recovery.verifiedBy": "", "recovery.url": "" },
+      },
+      { returnDocument: "after" },
+    );
+    return doc ? strip(doc) : null;
   },
 
   async findByKey(key: string): Promise<ApplicationEvaluation | null> {
